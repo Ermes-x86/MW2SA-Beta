@@ -344,17 +344,34 @@ void AfterInput(){
  UpdateInventorySafety(ped);
  bool ready=guest.ready&&GetTickCount()-guest.tick<1500;
  if(selfTest && GetFileAttributesW(L"MW2GTA.selftest")!=INVALID_FILE_ATTRIBUTES && ped && CPad::GetPad(0)->DisablePlayerControls==0){DeleteFileW(L"MW2GTA.selftest");testStarted=0;testDone=false;testTarget=0;testDistance=0;Log("SELFTEST fixture reset requested");}
- // F near a vehicle hands the player to GTA to board it, as missions require.
- // GTA sees F as freshly pressed because the active mod cleared OldState; the
- // mod resumes on foot after the player leaves the vehicle.
- static DWORD vehicleHandoffUntil=0;
+ // F near a vehicle hands the player to GTA to board it, exactly like F6:
+ // the mod restores GTA's camera and controls first, swallowing that F press.
+ // Only after the camera restore has settled is GTA's own enter-vehicle button
+ // pressed. Boarding in the same frame as the camera restore left GTA's camera
+ // stuck behind. The mod resumes on foot after the player leaves the vehicle.
+ static DWORD vehicleHandoffUntil=0,vehicleEnterAt=0;
+ auto* gtaPad=CPad::GetPad(0);
  if(active&&focused&&!weaponMenu&&!settings&&Edge('F')&&ped){
   std::array<CEntity*,8> vehiclesNear{};short n=0;
   CWorld::FindObjectsInRange(ped->GetPosition(),5.0f,false,&n,static_cast<short>(vehiclesNear.size()),vehiclesNear.data(),false,true,false,false,false);
-  if(n>0){vehicleHandoffUntil=GetTickCount()+5000;Log("Vehicle handoff to GTA");}
+  if(n>0){
+   DWORD now=GetTickCount();vehicleHandoffUntil=now+5000;vehicleEnterAt=now+250;
+   gtaPad->NewState={};gtaPad->OldState={};
+   Log("Vehicle handoff to GTA");
+  }
  }
- if(ped&&ped->bInVehicle)vehicleHandoffUntil=0;
+ if(ped&&ped->bInVehicle){vehicleHandoffUntil=0;vehicleEnterAt=0;}
  bool handoff=GetTickCount()<vehicleHandoffUntil;
+ if(handoff&&!active&&vehicleEnterAt){
+  DWORD now=GetTickCount();
+  if(now<vehicleEnterAt){gtaPad->NewState.ButtonTriangle=0;}
+  else if(now<vehicleEnterAt+120){
+   // One press: released last frame on the first injected frame, then held.
+   static DWORD pressFor=0;if(pressFor!=vehicleEnterAt){pressFor=vehicleEnterAt;gtaPad->OldState.ButtonTriangle=0;}
+   gtaPad->NewState.ButtonTriangle=255;
+  }
+  else vehicleEnterAt=0;
+ }
  bool scripted=CCutsceneMgr::ms_running||CPad::GetPad(0)->DisablePlayerControls!=0||TheCamera.m_bWideScreenOn;
  bool allowed=requested&&ready&&ped&&ped->m_fHealth>0&&!ped->bInVehicle&&!handoff&&!FrontEndMenuManager.m_bMenuActive&&!CTimer::m_UserPause&&!CTimer::m_CodePause&&!scripted;
  if(!allowed){Restore(!scripted);Exchange(ped);UpdateRuntimeRestart();return;}
