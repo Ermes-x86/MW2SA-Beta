@@ -1,5 +1,9 @@
 # MW2-GTA (Beta)
 
+> **Note:** this README was (mostly) AI generated. If something in the
+> installation doesn't work, please let me know by
+> [opening an issue](../../issues).
+
 **Call of Duty: Modern Warfare 2 (2009) gameplay inside GTA San Andreas.**
 
 MW2-GTA is a passthrough mod. Press F6 in GTA San Andreas and you play in
