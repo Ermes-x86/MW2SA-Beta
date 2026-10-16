@@ -128,7 +128,6 @@ The repository has two halves:
 | `bridge/` | Native GTA SA plugin (`MW2GTA.asi`), C++ against plugin-sdk |
 | `iw4l/` | Modified IW4L runtime (Rust) |
 | `installer/` | Release installer and uninstaller |
-| `scripts/Build-Release.ps1` | Builds both halves and packages the release zip |
 
 Prerequisites: Visual Studio Build Tools with C++ (x86), a built
 [plugin-sdk](https://github.com/DK22Pac/plugin-sdk) for GTA SA, and Rust
@@ -136,11 +135,15 @@ Prerequisites: Visual Studio Build Tools with C++ (x86), a built
 
 ```powershell
 $env:PLUGIN_SDK_DIR = 'C:\dev\plugin-sdk'
-powershell -ExecutionPolicy Bypass -File scripts\Build-Release.ps1 -Version 0.1.0-beta
+bridge\Build-ASI.cmd                     # -> bridge\build\MW2GTA.asi
+cd iw4l
+$env:CARGO_PROFILE_DEV_DEBUG = '0'; $env:CARGO_PROFILE_DEV_OPT_LEVEL = '1'
+cargo build -p launcher                  # -> iw4l\target\debug\iw4l.exe
 ```
 
-This produces `dist\MW2-GTA-0.1.0-beta.zip`. The native and runtime halves share a
-memory layout (`bridge/src/Protocol.h` and `iw4l/crates/bootstrap/src/gta_bridge.rs`)
+Install `MW2GTA.asi` into the GTA folder, and `iw4l.exe` (renamed
+`iw4l-gta.exe`) with `installer\gta-bridge-settings.cfg` into `<GTA>\MW2GTA`.
+The native and runtime halves share a memory layout (`bridge/src/Protocol.h` and `iw4l/crates/bootstrap/src/gta_bridge.rs`)
 and must always be built and shipped together.
 
 ## Credits

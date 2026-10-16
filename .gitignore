@@ -13,3 +13,6 @@ account.dat
 .account.dat.lock
 .env
 *.lnk
+
+# Local release tooling (not published)
+scripts/
