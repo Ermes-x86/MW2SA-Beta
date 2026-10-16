@@ -1,0 +1,59 @@
+MW2-GTA (Beta)
+
+Copyright 2026 Ermes_x86 (Payne)
+
+MW2-GTA runs Call of Duty: Modern Warfare 2 (2009) gameplay inside
+Grand Theft Auto: San Andreas. It is licensed under the Apache License,
+Version 2.0; see LICENSE.
+
+--------------------------------------------------------------------------------
+IW4L (modified)
+--------------------------------------------------------------------------------
+
+The iw4l/ directory contains a modified copy of IW4L.
+
+  IW4L - Copyright 2026 vladtrc
+  https://github.com/vladtrc/iw4L
+  Licensed under the Apache License, Version 2.0.
+
+Base revision: 4d65a39376e14390abe21bd9ad24a28c2687e90f
+
+Ermes_x86 (Payne) modified IW4L to run as a gameplay runtime for the GTA
+San Andreas bridge. The changes are active only when the IW4L_GTA_BRIDGE
+environment variable is set; standalone IW4L behaviour is preserved. Changed
+areas include:
+  - crates/bootstrap: GTA bridge (shared memory, input, collision, camera,
+    offscreen rendering and readback, inventory, lock-on, projectiles)
+  - crates/sim, crates/net: external movement backend, host weapon lock,
+    host-resolved melee, projectile detonation requests
+  - crates/render_frontend, crates/render_gpu, crates/hud: source-map
+    suppression and overlay presentation
+  - crates/audio, crates/sim script host: source-map ambience, radar ping
+    and match music filtering
+  - crates/console: background account saving
+
+IW4L's own NOTICE, LICENSE and THIRD-PARTY-LICENSES.txt are kept unchanged
+in iw4l/ and apply to that directory and to the runtime built from it.
+
+--------------------------------------------------------------------------------
+Other projects
+--------------------------------------------------------------------------------
+
+plugin-sdk - https://github.com/DK22Pac/plugin-sdk (MIT License)
+  The native bridge (bridge/) is built against plugin-sdk for GTA SA. It is
+  not vendored in this repository.
+
+The release installer only links to, and does not bundle, the MixMods
+"SA Essentials" pack (https://www.mixmods.com.br/2019/06/sa-essentials-pack/)
+and the ASI loaders it contains.
+
+--------------------------------------------------------------------------------
+Game content
+--------------------------------------------------------------------------------
+
+No Call of Duty or Grand Theft Auto game data is contained in this repository
+or in any MW2-GTA release. MW2-GTA reads game data from copies of the games the
+user already owns. Call of Duty, Modern Warfare, Grand Theft Auto, San Andreas,
+related trademarks and all original game assets belong to their respective
+owners. MW2-GTA is not affiliated with, endorsed by or supported by
+Activision, Infinity Ward, Rockstar Games or Take-Two Interactive.

@@ -1,0 +1,15 @@
+# Build outputs
+dist/
+bridge/build/
+iw4l/target/
+*.obj
+*.pdb
+*.asi
+
+# Local runtime data (never commit)
+iw4l/context/
+iw4l-artifacts/
+account.dat
+.account.dat.lock
+.env
+*.lnk
