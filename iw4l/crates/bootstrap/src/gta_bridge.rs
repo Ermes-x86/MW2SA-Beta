@@ -288,6 +288,8 @@ struct Bridge {
     host_movement: HostMovement,
     host_lock: HostLock,
     lock_started: Option<(u32, Instant)>,
+    /// Where and since when the player has pushed a movement key without moving.
+    blocked: Option<([f32; 3], Instant)>,
     movement: GuestMovement,
     movement_epoch: u32,
     scene_sequence: u32,
@@ -331,6 +333,7 @@ pub fn install(app: &mut App) {
         host_movement: HostMovement::default(),
         host_lock: HostLock::default(),
         lock_started: None,
+        blocked: None,
         movement: GuestMovement::default(),
         movement_epoch: 0,
         scene_sequence: 0,
@@ -657,13 +660,7 @@ fn anchor_authority(
             bridge.ghosts.clear();
         }
         let ps = world.0.player(local.0).unwrap();
-        let maxs_z = if ps.pm_flags & playerstate_iw4::pm_flags::PRONE != 0 {
-            movement_iw4::PRONE_MAXS_Z
-        } else if ps.pm_flags & playerstate_iw4::pm_flags::CROUCH != 0 {
-            movement_iw4::CROUCH_MAXS_Z
-        } else {
-            movement_iw4::STAND_MAXS_Z
-        };
+        let maxs_z = hull_maxs_z(ps);
         let ghosted = bridge.ghosts.len();
         let origin = ps.origin;
         let released = scene.release_traps(
@@ -688,11 +685,11 @@ fn anchor_authority(
                 Launch,
                 "GTA collision trap lifted: dz={dz} origin={origin:?}"
             );
-        } else if released.surfaces > 0 && bridge.ghosts.len() == ghosted {
+        } else if released.walls > 0 {
             diag::info!(
                 Launch,
                 "GTA collision trap released static walls: surfaces={} origin={origin:?}",
-                released.surfaces
+                released.walls
             );
         }
         let scene = Arc::new(scene);
@@ -705,6 +702,83 @@ fn anchor_authority(
         bridge.collision = Some(scene);
         bridge.installed_scene = bridge.scene_sequence;
         bridge.timing.scene_ms += started.elapsed().as_secs_f32() * 1000.0;
+    }
+    unblock(&mut bridge, &mut world.0, local.0);
+}
+fn hull_maxs_z(ps: &playerstate_iw4::PlayerState) -> f32 {
+    if ps.pm_flags & playerstate_iw4::pm_flags::PRONE != 0 {
+        movement_iw4::PRONE_MAXS_Z
+    } else if ps.pm_flags & playerstate_iw4::pm_flags::CROUCH != 0 {
+        movement_iw4::CROUCH_MAXS_Z
+    } else {
+        movement_iw4::STAND_MAXS_Z
+    }
+}
+/// A player who holds a movement key for half a second without moving is
+/// caught on host geometry IW4's step does not climb (kerbs, stair lips,
+/// seams between GTA models). Step them onto it when there is open space
+/// ahead; otherwise record what blocks them.
+fn unblock(bridge: &mut Bridge, world: &mut sim::SimWorld, local: sim::ClientId) {
+    const BLOCKED: Duration = Duration::from_millis(500);
+    let Some(ps) = world.player(local).copied() else {
+        return;
+    };
+    let keys = if live(&bridge.host) {
+        bridge.host.buttons
+    } else {
+        0
+    };
+    let forward = f32::from(keys & 16 != 0) - f32::from(keys & 32 != 0);
+    let side = f32::from(keys & 128 != 0) - f32::from(keys & 64 != 0);
+    if forward == 0.0 && side == 0.0 {
+        bridge.blocked = None;
+        return;
+    }
+    let moved = |a: [f32; 3]| (a[0] - ps.origin[0]).hypot(a[1] - ps.origin[1]);
+    match bridge.blocked {
+        Some((at, since)) if moved(at) < 2.0 => {
+            if since.elapsed() < BLOCKED {
+                return;
+            }
+        }
+        _ => {
+            bridge.blocked = Some((ps.origin, Instant::now()));
+            return;
+        }
+    }
+    bridge.blocked = Some((ps.origin, Instant::now()));
+    let Some(scene) = bridge.collision.clone() else {
+        return;
+    };
+    let (sin, cos) = ps.viewangles[1].to_radians().sin_cos();
+    let mut direction = [cos * forward + sin * side, sin * forward - cos * side];
+    let length = direction[0].hypot(direction[1]);
+    direction = direction.map(|d| d / length);
+    match scene.unblock_lift(
+        ps.origin,
+        [-15.0, -15.0, 0.0],
+        [15.0, 15.0, hull_maxs_z(&ps)],
+        0x0281_0011,
+        direction,
+    ) {
+        Ok(dz) => {
+            world.lift_player(local, dz);
+            diag::info!(
+                Launch,
+                "GTA movement unblocked: dz={dz} direction={direction:?} origin={:?}",
+                ps.origin
+            );
+        }
+        Err(probe) => diag::info!(
+            Launch,
+            "GTA movement blocked: origin={:?} direction={direction:?} fraction={} normal={:?} startsolid={} grounded={} velocity={:?}",
+            ps.origin,
+            probe.fraction,
+            probe.normal,
+            probe.startsolid,
+            ps.ground_entity_num != playerstate_iw4::ENTITYNUM_NONE,
+            ps.velocity
+        ),
     }
 }
 /// GTA vehicles and ground are not IW4 entities, so the launcher scripts'

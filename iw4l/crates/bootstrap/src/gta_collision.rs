@@ -27,11 +27,25 @@ struct Surface {
 pub struct TrapRelease {
     /// Surfaces left out of this scene (released entities and walls).
     pub surfaces: usize,
+    /// Of those, steep static faces released because no lift was clear.
+    pub walls: usize,
     /// Upward move, in IW4 units, that clears the player's hull.
     pub lift: Option<f32>,
 }
 /// Largest upward move used to free a player, about one metre.
 const MAX_LIFT: f32 = 40.0;
+/// Largest step used to free a blocked player, about 0.6 m: above IW4's own
+/// 18-unit step, below anything a player could not climb in MW2 by mantling.
+const MAX_UNBLOCK_STEP: f32 = 24.0;
+/// How far ahead a lifted player must have open space, in IW4 units.
+const UNBLOCK_AHEAD: f32 = 16.0;
+/// What blocks a player who pushes against host geometry without moving.
+#[derive(Debug)]
+pub struct MoveProbe {
+    pub fraction: f32,
+    pub normal: [f32; 3],
+    pub startsolid: bool,
+}
 #[derive(Debug, Default)]
 pub struct HostCollision {
     surfaces: Vec<Surface>,
@@ -152,6 +166,7 @@ impl HostCollision {
         ghosts: &mut Vec<u32>,
     ) -> TrapRelease {
         let before = self.surfaces.len();
+        let mut walls = 0;
         let lo: [f32; 3] = std::array::from_fn(|i| origin[i] + mins[i] - 1.0);
         let hi: [f32; 3] = std::array::from_fn(|i| origin[i] + maxs[i] + 1.0);
         ghosts.retain(|&tag| {
@@ -221,6 +236,7 @@ impl HostCollision {
                 if lift.is_some() {
                     return TrapRelease {
                         surfaces: before - self.surfaces.len(),
+                        walls: 0,
                         lift,
                     };
                 }
@@ -237,6 +253,7 @@ impl HostCollision {
                     }
                 } else if pass == 1 && s.planes[0][2].abs() < 0.7 {
                     self.surfaces.swap_remove(i);
+                    walls += 1;
                 }
             }
             self.surfaces
@@ -244,8 +261,64 @@ impl HostCollision {
         }
         TrapRelease {
             surfaces: before - self.surfaces.len(),
+            walls,
             lift: None,
         }
+    }
+    /// For a player pushing in `direction` (horizontal, unit length) without
+    /// moving: the smallest lift that clears the hull and opens space ahead,
+    /// e.g. a kerb, stair lip or seam between GTA models that IW4's step does
+    /// not climb. `Err` describes what blocks the move when no such step
+    /// exists, or reports an open way when geometry is not what blocks it.
+    pub fn unblock_lift(
+        &self,
+        origin: [f32; 3],
+        mins: [f32; 3],
+        maxs: [f32; 3],
+        tracemask: u32,
+        direction: [f32; 2],
+    ) -> Result<f32, MoveProbe> {
+        let probe = |at: [f32; 3]| {
+            self.trace(GroundTraceInput {
+                start: at,
+                end: [
+                    at[0] + direction[0] * UNBLOCK_AHEAD,
+                    at[1] + direction[1] * UNBLOCK_AHEAD,
+                    at[2],
+                ],
+                mins,
+                maxs,
+                tracemask,
+            })
+        };
+        let here = probe(origin);
+        let blocked = MoveProbe {
+            fraction: here.fraction,
+            normal: here.normal,
+            startsolid: here.startsolid != 0 || here.allsolid != 0,
+        };
+        if !blocked.startsolid && blocked.fraction >= 0.5 {
+            return Err(blocked);
+        }
+        (2..=MAX_UNBLOCK_STEP as i32)
+            .step_by(2)
+            .map(|dz| dz as f32)
+            .find(|&dz| {
+                let at = [origin[0], origin[1], origin[2] + dz];
+                let clear = self.trace(GroundTraceInput {
+                    start: at,
+                    end: at,
+                    mins,
+                    maxs,
+                    tracemask,
+                });
+                let ahead = probe(at);
+                clear.startsolid == 0
+                    && clear.allsolid == 0
+                    && ahead.startsolid == 0
+                    && ahead.fraction >= 0.5
+            })
+            .ok_or(blocked)
     }
     fn touches(&self, index: usize, input: GroundTraceInput) -> bool {
         matches!(
@@ -500,6 +573,35 @@ mod tests {
         assert_eq!((clear.startsolid, clear.allsolid), (0, 0));
         // The step and the floor still support the player.
         assert!(trace(&scene, at, [0.0, 0.0, -10.0]).fraction < 1.0);
+    }
+    #[test]
+    fn blocked_player_steps_onto_a_low_ledge_but_not_through_a_wall() {
+        let unblock = |scene: &HostCollision, origin: [f32; 3]| {
+            scene.unblock_lift(
+                origin,
+                [-15.0, -15.0, 0.0],
+                [15.0, 15.0, 70.0],
+                0x02810011,
+                [1.0, 0.0],
+            )
+        };
+        // A 0.5 m ledge (19.7 units), just above IW4's 18-unit step, right
+        // in front of the capsule.
+        let mut triangles = host_box([0.4, -2.0, 0.0], [3.0, 2.0, 0.5], 0);
+        triangles.push(floor());
+        let scene = HostCollision::from_triangles(&triangles, [0.0; 3]);
+        let origin = [0.0, 0.0, 0.25];
+        let lift = unblock(&scene, origin).expect("a low ledge must be climbable");
+        assert!(lift >= 19.0 && lift <= 24.0, "{lift}");
+        // A 2 m wall stays a wall.
+        let mut triangles = host_box([0.4, -2.0, 0.0], [3.0, 2.0, 2.0], 0);
+        triangles.push(floor());
+        let scene = HostCollision::from_triangles(&triangles, [0.0; 3]);
+        let wall = unblock(&scene, origin).expect_err("a wall must not be climbed");
+        assert!(wall.fraction < 0.5 && wall.normal[0] < -0.9, "{wall:?}");
+        // Nothing to step over in open space.
+        let scene = HostCollision::from_triangles(&[floor()], [0.0; 3]);
+        assert!(unblock(&scene, origin).unwrap_err().fraction >= 0.5);
     }
     fn trace(scene: &HostCollision, start: [f32; 3], end: [f32; 3]) -> Trace {
         scene.trace(GroundTraceInput {
