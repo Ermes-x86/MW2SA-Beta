@@ -93,6 +93,7 @@ Say '  2. Find your Call of Duty: Modern Warfare 2 (2009) folder.'
 Say '  3. Copy MW2GTA.asi into GTA and the MW2 runtime next to it.'
 Say ''
 Say 'Your GTA SA and MW2 save games are never deleted or changed.' Green
+Say '(But a backup is always recommended when installing mods.)' Yellow
 Say ''
 
 foreach ($name in 'gta_sa', 'iw4l-gta') {
