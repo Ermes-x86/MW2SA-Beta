@@ -58,6 +58,8 @@ GTA SA (x86) + MW2GTA.asi            IW4L runtime (x64)
    - checks for an ASI loader and, if none is found, offers to open the MixMods
      Essentials pack page;
    - finds Modern Warfare 2 in your Steam libraries (or asks you to pick it);
+   - detects Grinch's CheatMenu and offers to move its freecam key from F6
+     (MW2-GTA's toggle) to F11, keeping a backup of its settings;
    - copies `MW2GTA.asi` into GTA and the MW2 runtime into `<GTA>\MW2GTA`
      (or `%LOCALAPPDATA%\MW2GTA` when GTA is under Program Files);
    - optionally creates a desktop shortcut.
@@ -101,6 +103,16 @@ prepares MW2 assets and takes about a minute.
 - Flashbangs make GTA NPCs freeze in place; GTA has no blinded state.
 - Killstreaks, MW2 radar contacts and scoreboard are not integrated with GTA.
 - Occasional short MW2 hitches can still happen.
+
+## Troubleshooting
+
+- **The camera jumps to a frozen spot when entering a vehicle (or "player
+  teleported" appears).** Grinch's CheatMenu also uses F6, for its freecam,
+  and Enter teleports the player while that freecam is on. Let the installer
+  move the freecam key, or in CheatMenu open Menu > Hotkeys and rebind
+  "Toggle freecam" to another key.
+- **Nothing happens on F6.** Check that an ASI loader is installed and that
+  `MW2GTA.log` appears in the GTA folder after starting the game.
 
 ## Building from source
 

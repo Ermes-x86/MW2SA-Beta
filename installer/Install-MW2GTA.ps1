@@ -153,6 +153,33 @@ if (-not $asiLoader) {
     Say "ASI loader found ($($asiLoader -join ', '))." Green
 }
 
+# --- Grinch's CheatMenu ----------------------------------------------------
+# CheatMenu toggles its freecam with F6 by default, the same key as MW2-GTA.
+# Its freecam then stays on unseen behind MW2 mode and appears (frozen where
+# F6 was pressed) whenever MW2 hands control back, e.g. when entering a car.
+# Its Enter key also teleports the player while that freecam is on.
+foreach ($asi in @(Get-ChildItem -Path $GtaDir -Filter 'CheatMenuSA.asi' -Recurse -Depth 4 -File -ErrorAction SilentlyContinue)) {
+    $config = Join-Path $asi.DirectoryName 'CheatMenuSA.toml'
+    $text = if (Test-Path $config) { [IO.File]::ReadAllText($config) } else { '' }
+    $section = [regex]'(?m)^\[Hotkeys\.Freecam\.Toggle\]\s*\r?\nKey1\s*=\s*(\d+)\s*\r?\nKey2\s*=\s*(\d+)'
+    $match = $section.Match($text)
+    if ($match.Success -and $match.Groups[1].Value -ne '117' -and $match.Groups[2].Value -ne '117') { continue }
+    Say ''
+    Say "Grinch's CheatMenu found: $($asi.DirectoryName)" Yellow
+    Say 'Its freecam is toggled with F6, the same key as MW2-GTA. That makes the camera' Yellow
+    Say 'jump to a free camera when MW2 mode hands control back (for example in vehicles).' Yellow
+    if (Ask-YesNo 'Move the CheatMenu freecam key to F11 (a backup of its settings is kept)?') {
+        if (Test-Path $config) { Copy-Item $config "$config.before-mw2gta.bak" -Force }
+        $replacement = "[Hotkeys.Freecam.Toggle]`r`nKey1 = 122`r`nKey2 = 122"
+        if ($match.Success) { $text = $section.Replace($text, $replacement, 1) }
+        else { $text = $text.TrimEnd() + $(if ($text) { "`r`n`r`n" } else { '' }) + $replacement + "`r`n" }
+        [IO.File]::WriteAllText($config, $text, (New-Object Text.UTF8Encoding $false))
+        Say 'CheatMenu freecam now uses F11.' Green
+    } else {
+        Say 'Left unchanged. Rebind "Toggle freecam" in CheatMenu > Menu > Hotkeys if the camera jumps.' Yellow
+    }
+}
+
 # --- Modern Warfare 2 ------------------------------------------------------
 if (-not (Test-Mw2 $Mw2Dir)) {
     $Mw2Dir = Steam-Libraries | ForEach-Object { Join-Path $_ 'steamapps\common\Call of Duty Modern Warfare 2' } |
