@@ -1,5 +1,10 @@
 # MW2-GTA (Beta)
 
+> ⚠️ **WARNING: this mod is in beta and still contains bugs.** Expect the
+> player to sometimes get stuck on geometry, camera or control glitches, and
+> missing or unfinished features. Back up your GTA San Andreas saves before
+> playing, and press F6 at any time to return to normal GTA controls.
+
 > **Note:** this README was (mostly) AI generated. If something in the
 > installation doesn't work, please let me know by
 > [opening an issue](../../issues).
