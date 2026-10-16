@@ -22,6 +22,16 @@ struct Surface {
     /// Host entity identity for movable vehicles, peds and props; 0 is static.
     tag: u32,
 }
+/// What `release_traps` did to free a player IW4's recovery could not.
+#[derive(Debug, Default, PartialEq)]
+pub struct TrapRelease {
+    /// Surfaces left out of this scene (released entities and walls).
+    pub surfaces: usize,
+    /// Upward move, in IW4 units, that clears the player's hull.
+    pub lift: Option<f32>,
+}
+/// Largest upward move used to free a player, about one metre.
+const MAX_LIFT: f32 = 40.0;
 #[derive(Debug, Default)]
 pub struct HostCollision {
     surfaces: Vec<Surface>,
@@ -123,13 +133,16 @@ impl HostCollision {
     pub fn is_empty(&self) -> bool {
         self.surfaces.is_empty()
     }
-    /// Releases a player whom IW4's bounded recovery cannot free, without
-    /// moving them. Host vehicles, peds and props (a car driving into the
-    /// player, a door dropped by an explosion) can enter the capsule deeper
-    /// than the solver's budget between scene updates; the whole entity then
-    /// stops blocking until the capsule has left its bounds. Steep static
-    /// faces are released only for the current scene; walkable floors stay.
-    /// Normal contacts that IW4 resolves itself are untouched.
+    /// Frees a player whom IW4's bounded recovery cannot. Host vehicles, peds
+    /// and props (a car driving into the player, a door dropped by an
+    /// explosion) can enter the capsule deeper than the solver's budget
+    /// between scene updates; the whole entity then stops blocking until the
+    /// capsule has left its bounds. Static geometry can do the same where
+    /// models meet or a detailed collision model streams in around the player
+    /// (stairs, road seams): such a player is lifted by the smallest step that
+    /// clears the hull and falls back onto the surface. Only when no lift up to
+    /// `MAX_LIFT` is clear are steep static faces released for this scene;
+    /// floors always stay. Contacts IW4 resolves itself are untouched.
     pub fn release_traps(
         &mut self,
         origin: [f32; 3],
@@ -137,7 +150,7 @@ impl HostCollision {
         maxs: [f32; 3],
         tracemask: u32,
         ghosts: &mut Vec<u32>,
-    ) -> usize {
+    ) -> TrapRelease {
         let before = self.surfaces.len();
         let lo: [f32; 3] = std::array::from_fn(|i| origin[i] + mins[i] - 1.0);
         let hi: [f32; 3] = std::array::from_fn(|i| origin[i] + maxs[i] + 1.0);
@@ -186,12 +199,31 @@ impl HostCollision {
             maxs,
             tracemask,
         };
+        let trapped = |scene: &Self| {
+            let trace = scene.trace(input);
+            (trace.startsolid != 0 || trace.allsolid != 0)
+                && scene.correct_solid(origin, mins, maxs, tracemask).is_none()
+        };
         for pass in 0..2 {
-            let trace = self.trace(input);
-            if (trace.startsolid == 0 && trace.allsolid == 0)
-                || self.correct_solid(origin, mins, maxs, tracemask).is_some()
-            {
+            if !trapped(self) {
                 break;
+            }
+            if pass == 1 {
+                let lift = (1..=MAX_LIFT as i32).map(|dz| dz as f32).find(|&dz| {
+                    let at = [origin[0], origin[1], origin[2] + dz];
+                    let trace = self.trace(GroundTraceInput {
+                        start: at,
+                        end: at,
+                        ..input
+                    });
+                    trace.startsolid == 0 && trace.allsolid == 0
+                });
+                if lift.is_some() {
+                    return TrapRelease {
+                        surfaces: before - self.surfaces.len(),
+                        lift,
+                    };
+                }
             }
             let touching: Vec<usize> = (0..self.surfaces.len())
                 .filter(|&i| self.touches(i, input))
@@ -210,7 +242,10 @@ impl HostCollision {
             self.surfaces
                 .retain(|s| s.tag == 0 || !ghosts.contains(&s.tag));
         }
-        before - self.surfaces.len()
+        TrapRelease {
+            surfaces: before - self.surfaces.len(),
+            lift: None,
+        }
     }
     fn touches(&self, index: usize, input: GroundTraceInput) -> bool {
         matches!(
@@ -362,13 +397,15 @@ mod tests {
             .collect()
     }
     fn release(scene: &mut HostCollision, origin: [f32; 3], ghosts: &mut Vec<u32>) -> usize {
-        scene.release_traps(
+        let result = scene.release_traps(
             origin,
             [-15.0, -15.0, 0.0],
             [15.0, 15.0, 70.0],
             0x02810011,
             ghosts,
-        )
+        );
+        assert_eq!(result.lift, None);
+        result.surfaces
     }
     fn floor() -> HostTriangle {
         HostTriangle {
@@ -431,6 +468,38 @@ mod tests {
         let mut ghosts = Vec::new();
         assert_eq!(release(&mut scene, origin, &mut ghosts), 12);
         assert_eq!(ghosts, [9]);
+    }
+    #[test]
+    fn player_sunk_into_a_stair_step_is_lifted_onto_it() {
+        // A static step 0.3 m high whose top cuts through the capsule 12 units
+        // above the feet, past IW4's 8-unit recovery: a seam between two
+        // models, or stairs streaming in around the player.
+        let mut triangles = host_box([-0.2, -1.0, 0.0], [2.0, 1.0, 0.3], 0);
+        triangles.push(floor());
+        let mut scene = HostCollision::from_triangles(&triangles, [0.0; 3]);
+        let origin = [0.0, 0.0, 0.0];
+        assert!(
+            scene
+                .correct_solid(origin, [-15.0, -15.0, 0.0], [15.0, 15.0, 70.0], 0x02810011)
+                .is_none()
+        );
+        let mut ghosts = Vec::new();
+        let result = scene.release_traps(
+            origin,
+            [-15.0, -15.0, 0.0],
+            [15.0, 15.0, 70.0],
+            0x02810011,
+            &mut ghosts,
+        );
+        // Lifted just above the step top (0.3 m = 11.8 units); nothing removed.
+        let lift = result.lift.expect("a stuck player must be lifted clear");
+        assert!(lift > 11.0 && lift < 14.0, "{lift}");
+        assert_eq!((result.surfaces, ghosts.len()), (0, 0));
+        let at = [0.0, 0.0, lift];
+        let clear = trace(&scene, at, at);
+        assert_eq!((clear.startsolid, clear.allsolid), (0, 0));
+        // The step and the floor still support the player.
+        assert!(trace(&scene, at, [0.0, 0.0, -10.0]).fraction < 1.0);
     }
     fn trace(scene: &HostCollision, start: [f32; 3], end: [f32; 3]) -> Trace {
         scene.trace(GroundTraceInput {

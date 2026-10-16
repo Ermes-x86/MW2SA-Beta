@@ -665,6 +665,7 @@ fn anchor_authority(
             movement_iw4::STAND_MAXS_Z
         };
         let ghosted = bridge.ghosts.len();
+        let origin = ps.origin;
         let released = scene.release_traps(
             ps.origin,
             [-15.0, -15.0, 0.0],
@@ -676,9 +677,22 @@ fn anchor_authority(
             diag::info!(
                 Launch,
                 "GTA collision trap released: surfaces={} entities={:?} origin={:?}",
-                released,
+                released.surfaces,
                 bridge.ghosts,
-                ps.origin
+                origin
+            );
+        }
+        if let Some(dz) = released.lift {
+            world.0.lift_player(local.0, dz);
+            diag::info!(
+                Launch,
+                "GTA collision trap lifted: dz={dz} origin={origin:?}"
+            );
+        } else if released.surfaces > 0 && bridge.ghosts.len() == ghosted {
+            diag::info!(
+                Launch,
+                "GTA collision trap released static walls: surfaces={} origin={origin:?}",
+                released.surfaces
             );
         }
         let scene = Arc::new(scene);

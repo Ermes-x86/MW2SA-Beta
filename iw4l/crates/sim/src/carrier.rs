@@ -212,6 +212,17 @@ impl SimWorld {
         }
     }
 
+    /// Raises a player whom host geometry has trapped beyond IW4's recovery,
+    /// so the normal move drops them back onto the surface.
+    pub fn lift_player(&mut self, id: ClientId, dz: f32) -> bool {
+        let mut frame = self.frame();
+        let Some(ps) = frame.player_mut(id) else {
+            return false;
+        };
+        ps.origin[2] += dz;
+        true
+    }
+
     /// Fires the fuse of this client's live projectile on the next tick, for
     /// host-detected triggers (a host actor crossing a planted claymore).
     pub fn detonate_projectile(&mut self, owner: ClientId, id: u32) -> bool {
