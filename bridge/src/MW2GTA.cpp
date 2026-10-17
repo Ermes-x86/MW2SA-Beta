@@ -547,6 +547,21 @@ void Draw(){
  device->SetTextureStageState(0,D3DTSS_COLOROP,D3DTOP_MODULATE);device->SetTextureStageState(0,D3DTSS_COLORARG1,D3DTA_TEXTURE);device->SetTextureStageState(0,D3DTSS_COLORARG2,D3DTA_DIFFUSE);device->SetTextureStageState(0,D3DTSS_ALPHAOP,D3DTOP_MODULATE);device->SetTextureStageState(0,D3DTSS_ALPHAARG1,D3DTA_TEXTURE);device->SetTextureStageState(0,D3DTSS_ALPHAARG2,D3DTA_DIFFUSE);device->SetTextureStageState(1,D3DTSS_COLOROP,D3DTOP_DISABLE);
  device->SetRenderState(D3DRS_BLENDOP,D3DBLENDOP_ADD);device->SetRenderState(D3DRS_COLORWRITEENABLE,15);device->SetSamplerState(0,D3DSAMP_SRGBTEXTURE,FALSE);
  device->SetSamplerState(0,D3DSAMP_MINFILTER,D3DTEXF_LINEAR);device->SetSamplerState(0,D3DSAMP_MAGFILTER,D3DTEXF_LINEAR);device->SetSamplerState(0,D3DSAMP_ADDRESSU,D3DTADDRESS_CLAMP);device->SetSamplerState(0,D3DSAMP_ADDRESSV,D3DTADDRESS_CLAMP);
+ // GTA's fire and heat-haze passes leave stencil testing, fog, clip planes
+ // and sometimes a smaller offscreen target behind. Inherited, they cut the
+ // overlay down to the fire's sprites or hide it. The state block restores
+ // all of these; the render target is restored below.
+ device->SetRenderState(D3DRS_STENCILENABLE,FALSE);device->SetRenderState(D3DRS_TWOSIDEDSTENCILMODE,FALSE);device->SetRenderState(D3DRS_FOGENABLE,FALSE);device->SetRenderState(D3DRS_CLIPPLANEENABLE,0);
+ device->SetRenderState(D3DRS_LIGHTING,FALSE);device->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE,FALSE);device->SetRenderState(D3DRS_ALPHAFUNC,D3DCMP_ALWAYS);device->SetRenderState(D3DRS_FILLMODE,D3DFILL_SOLID);
+ device->SetTextureStageState(0,D3DTSS_TEXCOORDINDEX,0);device->SetTextureStageState(0,D3DTSS_TEXTURETRANSFORMFLAGS,D3DTTFF_DISABLE);device->SetSamplerState(0,D3DSAMP_MIPFILTER,D3DTEXF_NONE);
+ IDirect3DSurface9* previousTarget=nullptr;IDirect3DSurface9* backBuffer=nullptr;bool retarget=false;
+ if(SUCCEEDED(device->GetRenderTarget(0,&previousTarget))&&SUCCEEDED(device->GetBackBuffer(0,0,D3DBACKBUFFER_TYPE_MONO,&backBuffer))&&previousTarget!=backBuffer){
+  D3DSURFACE_DESC current{},screen{};previousTarget->GetDesc(&current);backBuffer->GetDesc(&screen);
+  // A same-sized target can be a graphics mod's own screen buffer; keep it.
+  retarget=current.Width!=screen.Width||current.Height!=screen.Height;
+  if(retarget)device->SetRenderTarget(0,backBuffer);
+ }
+ {D3DVIEWPORT9 full{0,0,static_cast<DWORD>(RsGlobal.maximumWidth),static_cast<DWORD>(RsGlobal.maximumHeight),0.0f,1.0f};device->SetViewport(&full);}
  float w=static_cast<float>(RsGlobal.maximumWidth),h=static_cast<float>(RsGlobal.maximumHeight);
  if(texture){device->SetPixelShader(chromaShader);Quad(device,0,0,w,h,0xffffffff,texture);device->SetPixelShader(nullptr);}
  device->SetTextureStageState(0,D3DTSS_COLOROP,D3DTOP_SELECTARG2);device->SetTextureStageState(0,D3DTSS_ALPHAOP,D3DTOP_SELECTARG2);
@@ -576,6 +591,8 @@ void Draw(){
    if(click&&cursor.x>=x-5&&cursor.x<=x+width&&cursor.y>=rowY-6&&cursor.y<=rowY+28){*Settings[i].value=!*Settings[i].value;WritePrivateProfileStringW(L"Bridge",Settings[i].key,*Settings[i].value?L"1":L"0",iniPath.c_str());}
   }
  }
+ if(retarget)device->SetRenderTarget(0,previousTarget);
+ if(previousTarget)previousTarget->Release();if(backBuffer)backBuffer->Release();
  saved->Apply();saved->Release();
  // GTA text only after the device state is restored; inside the raw D3D
  // section it renders with the overlay's state and corrupts the frame.
