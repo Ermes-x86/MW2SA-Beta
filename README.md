@@ -87,14 +87,14 @@ prepares MW2 assets and takes about a minute.
 | C / Ctrl | Crouch / prone |
 | Left / right mouse | Fire / aim (with akimbo: right gun / left gun) |
 | R | Reload |
-| 2 | Next weapon |
+| 1 / 2, mouse wheel | Previous / next weapon |
 | V | Melee |
 | E | Use (e.g. pick up a thrown knife) |
 | G / H | Lethal equipment / tactical equipment |
 | F | Get into a nearby vehicle (MW2 mode returns when you get out) |
 | F8 | Weapon and equipment menu (arrows to choose, Enter to equip) |
 | F9 | Refill ammo |
-| F7 | Options: FOV, help text, infinite ammo, health regeneration, MW2 resolution |
+| F7 | Options: FOV, help text, infinite ammo, health regeneration, peaceful world, invert mouse, MW2 resolution |
 
 **MW2 resolution** (F7): "Match GTA" renders MW2 at GTA's aspect ratio (up to
 1280x720); fixed sizes are also available. Changing it restarts the MW2 runtime.
@@ -108,6 +108,10 @@ prepares MW2 assets and takes about a minute.
 - Flashbangs make GTA NPCs freeze in place; GTA has no blinded state.
 - Killstreaks, MW2 radar contacts and scoreboard are not integrated with GTA.
 - Occasional short MW2 hitches can still happen.
+- C4 places two charges before the detonator comes up; it should come up
+  after one.
+- With the Javelin, part of the arm (the sleeve) is drawn stretched in first
+  person.
 
 ## Troubleshooting
 

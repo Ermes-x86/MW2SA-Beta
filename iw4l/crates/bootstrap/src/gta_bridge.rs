@@ -283,6 +283,7 @@ struct Bridge {
     overlay_size: UVec2,
     last_tick: u32,
     last_cycle: bool,
+    last_cycle_back: bool,
     anchor: Option<[f32; 3]>,
     engine_anchor: [f32; 3],
     host_movement: HostMovement,
@@ -328,6 +329,7 @@ pub fn install(app: &mut App) {
         overlay_size: UVec2::ZERO,
         last_tick: 0,
         last_cycle: false,
+        last_cycle_back: false,
         anchor: None,
         engine_anchor: [0.0; 3],
         host_movement: HostMovement::default(),
@@ -557,13 +559,20 @@ fn host_keys(
         };
         input_iw4::input_cmd(&mut actions.client, id, input_iw4::SCRIPT_KEYNUM, now, msec);
     }
-    let cycle = buttons & 8 != 0;
-    if cycle && !bridge.last_cycle {
-        if let Some(id) = input_iw4::command_id_from_name("weapnext") {
+    // Weapon switching: 8 is next (key 2, wheel down), 65536 previous (key 1,
+    // wheel up). Each press switches once.
+    let next = buttons & 8 != 0;
+    let back = buttons & 65536 != 0;
+    for (pressed, name) in [
+        (next && !bridge.last_cycle, "weapnext"),
+        (back && !bridge.last_cycle_back, "weapprev"),
+    ] {
+        if pressed && let Some(id) = input_iw4::command_id_from_name(name) {
             input_iw4::input_cmd(&mut actions.client, id, input_iw4::SCRIPT_KEYNUM, now, msec);
         }
     }
-    bridge.last_cycle = cycle;
+    bridge.last_cycle = next;
+    bridge.last_cycle_back = back;
     actions.client.kb.speed.active = false;
     input_iw4::set_ads(&mut actions.client, buttons & 2 != 0);
     settings.fov = bridge.host.fov;
@@ -719,7 +728,7 @@ fn hull_maxs_z(ps: &playerstate_iw4::PlayerState) -> f32 {
 /// seams between GTA models). Step them onto it when there is open space
 /// ahead; otherwise record what blocks them.
 fn unblock(bridge: &mut Bridge, world: &mut sim::SimWorld, local: sim::ClientId) {
-    const BLOCKED: Duration = Duration::from_millis(500);
+    const BLOCKED: Duration = Duration::from_millis(300);
     let Some(ps) = world.player(local).copied() else {
         return;
     };

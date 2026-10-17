@@ -7,8 +7,10 @@ bool changedWantedCap=false,savedPoliceBackOff=false,savedEverybodyBackOff=false
 bool savedGarageBackOff=false;float savedCrimeMultiplier=1.0f;
 DWORD damageFeedbackUntil=0;float damageFeedbackStrength=0;
 // F7 options, saved in MW2GTA.ini.
-bool showHelpText=true,infiniteAmmo=false,healthRegen=true;
-struct GrenadeProxy {uint32_t id=0;int reference=0;DWORD seen=0;CVector rest{};bool triggered=false;CVector last{};bool hasLast=false;};
+bool showHelpText=true,infiniteAmmo=false,healthRegen=true,peacefulWorld=false,invertMouse=false;
+// GTA has no C4: its timed dynamite charge is the nearest explosive block.
+constexpr int C4Model=1654;
+struct GrenadeProxy {uint32_t id=0;int reference=0;DWORD seen=0;CVector rest{};bool triggered=false;CVector last{};bool hasLast=false;uint32_t weapon=0;CVector position{};};
 std::array<GrenadeProxy,ProjectileCount> grenadeProxies{};
 CPed* protectedMenuPlayer=nullptr;
 std::array<bool,6> previousMenuProof{};
@@ -37,6 +39,7 @@ void MonitorHealth(CPed* ped){
  previous=ped;health=ped?ped->m_fHealth:0;
 }
 
+void MaintainWorldReaction();
 void BeginWorldReaction(){
  reactionWanted=FindPlayerWanted();if(!reactionWanted)return;
  savedMaximumWanted=CWanted::MaximumWantedLevel;
@@ -47,12 +50,21 @@ void BeginWorldReaction(){
  savedLeaveAlone=reactionWanted->m_bLeavePlayerAlone;
  savedGarageBackOff=reactionWanted->m_bPoliceBackOffGarage;savedCrimeMultiplier=reactionWanted->m_fMultiplier;
  reactionWanted->m_bPoliceBackOff=false;reactionWanted->m_bEverybodyBackOff=false;reactionWanted->m_bLeavePlayerAlone=false;
+ MaintainWorldReaction();
  char line[180];sprintf_s(line,"World reaction enabled: wanted-cap=%u old-cap=%u backoff=%d/%d/%d",CWanted::MaximumWantedLevel,savedMaximumWanted,savedPoliceBackOff,savedEverybodyBackOff,savedLeaveAlone);Log(line);
  // async; never stall the stable player loop
- for(int model:{342,343,335,363})CStreaming::RequestModel(model,2);
+ for(int model:{342,343,335,363,C4Model})CStreaming::RequestModel(model,2);
 }
 void MaintainWorldReaction(){
  if(!active||!reactionWanted||reactionWanted!=FindPlayerWanted())return;
+ // Peaceful world (F7): police and NPCs leave the player alone and MW2
+ // combat is not reported as crime. Restored with the rest on exit.
+ if(peacefulWorld){
+  reactionWanted->m_bPoliceBackOff=true;reactionWanted->m_bEverybodyBackOff=true;reactionWanted->m_bLeavePlayerAlone=true;
+  if(CWanted::MaximumWantedLevel!=0){CWanted::SetMaximumWantedLevel(0);changedWantedCap=true;}
+  if(reactionWanted->m_nWantedLevel)if(auto* ped=FindPlayerPed())ped->SetWantedLevel(0);
+  return;
+ }
  // Mission scripts can reassert these after activation. Keep native pursuit
  // available while IW4 owns the player; restore the mission state on exit.
  bool changed=reactionWanted->m_bPoliceBackOff||reactionWanted->m_bEverybodyBackOff||reactionWanted->m_bLeavePlayerAlone||reactionWanted->m_bPoliceBackOffGarage;
@@ -62,7 +74,7 @@ void MaintainWorldReaction(){
  if(changed)reactionWanted->UpdateWantedLevel();
 }
 void RestoreWorldReaction(){
- if(changedWantedCap&&CWanted::MaximumWantedLevel==6)CWanted::SetMaximumWantedLevel(savedMaximumWanted);
+ if(changedWantedCap&&(CWanted::MaximumWantedLevel==6||CWanted::MaximumWantedLevel==0))CWanted::SetMaximumWantedLevel(savedMaximumWanted);
  if(reactionWanted&&reactionWanted==FindPlayerWanted()){
   reactionWanted->m_bPoliceBackOff=savedPoliceBackOff;
   reactionWanted->m_bEverybodyBackOff=savedEverybodyBackOff;
@@ -73,10 +85,10 @@ void RestoreWorldReaction(){
  reactionWanted=nullptr;changedWantedCap=false;
 }
 void ReportCrime(eCrimeType crime,CEntity* victim,CPed* player){
- if(player)reinterpret_cast<void(__cdecl*)(eCrimeType,CEntity*,CPed*)>(0x532010)(crime,victim,player);
+ if(player&&!peacefulWorld)reinterpret_cast<void(__cdecl*)(eCrimeType,CEntity*,CPed*)>(0x532010)(crime,victim,player);
 }
 void NotifyGunshot(CPed* player,CVector start,CVector end){
- if(!player)return;
+ if(!player||peacefulWorld)return;
  ReportCrime(CRIME_FIRE_WEAPON,player,player);
  // Construct and clone the original event exactly as CWeapon does. Calling
  // its destructor with flags=0 releases references without freeing this stack.
@@ -93,12 +105,18 @@ void DeleteGrenade(GrenadeProxy& proxy){
 }
 void ClearGrenades(){for(auto& proxy:grenadeProxies)DeleteGrenade(proxy);grenadeCollisionCenters.clear();}
 const char* CatalogName(uint32_t weapon){for(const auto& entry:weaponCatalog)if(entry.weapon==weapon)return entry.name;return "";}
+bool StunGrenade(uint32_t id,uint32_t weapon,CVector p,CPed* player);
+void MaintainStuns();
+// A thrown C4 is waiting for its detonator.
+bool c4Placed=false;
 // Closest GTA model for each MW2 projectile; the frag grenade is the default.
+// The satchel charge stands in for the claymore.
 int ProxyModel(uint32_t weapon){
  const char* name=CatalogName(weapon);
  if(!strcmp(name,"throwingknife"))return 335;
  if(strstr(name,"flash")||strstr(name,"concussion")||strstr(name,"smoke"))return 343;
- if(!strcmp(name,"c4")||!strcmp(name,"claymore"))return 363;
+ if(!strcmp(name,"c4"))return C4Model;
+ if(!strcmp(name,"claymore"))return 363;
  return 342;
 }
 // MW2 smoke: GTA's tear-gas effect, visual only, re-emitted around the
@@ -125,7 +143,15 @@ void ClearSmoke(){for(auto& puff:smokePuffs)if(puff.first)puff.first->Kill();smo
 void UpdateGrenades(const Projectile* rows,uint32_t count){
  if(!active){ClearGrenades();ClearSmoke();return;}
  grenadeCollisionCenters.clear();
- for(auto& proxy:grenadeProxies){bool exists=false;for(uint32_t i=0;i<count;i++)if(rows[i].id==proxy.id)exists=true;if(!exists)DeleteGrenade(proxy);}
+ for(auto& proxy:grenadeProxies){
+  bool exists=false;for(uint32_t i=0;i<count;i++)if(rows[i].id==proxy.id)exists=true;
+  if(exists||!proxy.id)continue;
+  if(proxy.weapon)StunGrenade(proxy.id,proxy.weapon,proxy.position,FindPlayerPed());
+  DeleteGrenade(proxy);
+ }
+ MaintainStuns();
+ c4Placed=false;
+ for(uint32_t i=0;i<count;i++)if(rows[i].id&&!strcmp(CatalogName(rows[i].weapon),"c4"))c4Placed=true;
  for(uint32_t i=0;i<count;i++){
   const auto& row=rows[i];if(!row.id||GetTickCount()-row.tick>500)continue;
   CVector p(row.origin[0],row.origin[1],row.origin[2]);if(!std::isfinite(p.x)||!std::isfinite(p.y)||!std::isfinite(p.z))continue;
@@ -133,6 +159,7 @@ void UpdateGrenades(const Projectile* rows,uint32_t count){
   GrenadeProxy* proxy=nullptr;for(auto& candidate:grenadeProxies)if(candidate.id==row.id){proxy=&candidate;break;}
   if(!proxy)for(auto& candidate:grenadeProxies)if(!candidate.id){proxy=&candidate;candidate.id=row.id;break;}
   if(!proxy)continue;
+  proxy->weapon=row.weapon;proxy->position=p;
   auto* object=proxy->reference?CPools::GetObject(proxy->reference):nullptr;
   if(!object){
    int model=ProxyModel(row.weapon);
@@ -144,7 +171,9 @@ void UpdateGrenades(const Projectile* rows,uint32_t count){
    object->SetPosition(p);CWorld::Add(object);
    char message[100];sprintf_s(message,"IW4 grenade visible id=%u weapon=%u",row.id,row.weapon);Log(message);
   }
-  CWorld::Remove(object);object->SetPosition(p);object->SetOrientation(row.angles[0]*Pi/180,row.angles[1]*Pi/180,row.angles[2]*Pi/180);CWorld::Add(object);object->UpdateRwMatrix();object->UpdateRwFrame();
+  CWorld::Remove(object);object->SetPosition(p);// The dynamite model stands upright; C4 lies flat on what it sticks to.
+  float lay=object->m_nModelIndex==C4Model?Pi/2:0.0f;
+  object->SetOrientation(row.angles[0]*Pi/180+lay,row.angles[1]*Pi/180,row.angles[2]*Pi/180);CWorld::Add(object);object->UpdateRwMatrix();object->UpdateRwFrame();
  }
 }
 void ConsumeShot(const Shot& shot,CPed* player);
@@ -176,6 +205,23 @@ void ThrowingKnifeHits(const Projectile* rows,uint32_t count,CPed* player){
 }
 // Flash and concussion: no lethal blast. GTA peds with line of sight freeze
 // in place for a time that falls off with distance, as MW2's flash does.
+// GTA's event responses (fleeing gunfire, reacting to the blast) replace a
+// one-off stand-still task, so the stun is re-issued until it runs out.
+struct StunnedPed {int reference=0;DWORD until=0,lastTask=0;};
+std::vector<StunnedPed> stunnedPeds;
+std::vector<std::pair<uint32_t,DWORD>> stunnedGrenades;
+void MaintainStuns(){
+ DWORD now=GetTickCount();
+ stunnedPeds.erase(std::remove_if(stunnedPeds.begin(),stunnedPeds.end(),[now](StunnedPed& s){
+  auto* ped=CPools::GetPed(s.reference);
+  if(!ped||ped->m_fHealth<=0||ped->bInVehicle||!ped->m_pIntelligence||static_cast<int>(s.until-now)<=0)return true;
+  if(now-s.lastTask>=400){
+   s.lastTask=now;
+   ped->m_pIntelligence->m_TaskMgr.SetTask(new CTaskSimpleStandStill(static_cast<int>(std::min<DWORD>(s.until-now,1000)),false,false,8.0f),TASK_PRIMARY_EVENT_RESPONSE_TEMP,false);
+  }
+  return false;
+ }),stunnedPeds.end());
+}
 void StunPeds(CVector p,float radius,DWORD maxMs,CPed* player){
  std::array<CEntity*,64> nearby{};short n=0;
  CWorld::FindObjectsInRange(p,radius,false,&n,static_cast<short>(nearby.size()),nearby.data(),false,false,true,false,false);
@@ -186,10 +232,29 @@ void StunPeds(CVector p,float radius,DWORD maxMs,CPed* player){
   if(!CWorld::GetIsLineOfSightClear(p+CVector(0,0,.2f),head,true,false,false,true,false,false,false))continue;
   float t=1.0f-std::clamp((head-p).Magnitude()/radius,0.0f,1.0f);
   int ms=static_cast<int>(1000+(maxMs-1000)*t);
-  ped->m_pIntelligence->m_TaskMgr.SetTask(new CTaskSimpleStandStill(ms,false,false,8.0f),TASK_PRIMARY_EVENT_RESPONSE_TEMP,false);
+  int reference=CPools::GetPedRef(ped);DWORD until=GetTickCount()+ms;
+  auto known=std::find_if(stunnedPeds.begin(),stunnedPeds.end(),[reference](const StunnedPed& s){return s.reference==reference;});
+  if(known==stunnedPeds.end())stunnedPeds.push_back({reference,until,0});
+  else if(static_cast<int>(until-known->until)>0)known->until=until;
   stunned++;
  }
  char line[100];sprintf_s(line,"Stun grenade affected %d GTA peds",stunned);Log(line);
+ MaintainStuns();
+}
+// Flash and concussion grenades carry no blast for GTA. Their detonation is
+// the moment their projectile leaves the live list; stun once per grenade.
+bool StunGrenade(uint32_t id,uint32_t weapon,CVector p,CPed* player){
+ const char* name=CatalogName(weapon);
+ bool flash=strstr(name,"flash")!=nullptr,concussion=strstr(name,"concussion")!=nullptr;
+ if(!flash&&!concussion)return false;
+ // IW4 reuses projectile ids; the same id within a few seconds is the same
+ // grenade reported twice (its explosion event and its disappearance).
+ DWORD now=GetTickCount();
+ stunnedGrenades.erase(std::remove_if(stunnedGrenades.begin(),stunnedGrenades.end(),[now](const auto& g){return now-g.second>3000;}),stunnedGrenades.end());
+ for(const auto& g:stunnedGrenades)if(g.first==id)return true;
+ stunnedGrenades.emplace_back(id,now);
+ if(flash)StunPeds(p,12.0f,5000,player);else StunPeds(p,10.0f,3000,player);
+ return true;
 }
 void ConsumeExplosion(const Explosion& explosion,CPed* player){
  if(!active||!player||GetTickCount()-explosion.tick>1000||!std::isfinite(explosion.radius))return;
@@ -201,8 +266,8 @@ void ConsumeExplosion(const Explosion& explosion,CPed* player){
  int slot=-1;for(unsigned i=0;i<MAX_EXPLOSIONS;i++)if(!aExplosions[i].m_nActiveCounter){slot=static_cast<int>(i);break;}
  if(slot<0){Log("Native explosion pool full");return;}
  const char* name=CatalogName(explosion.weapon);
- if(explosion.kind==2||strstr(name,"flash")){StunPeds(p,12.0f,5000,player);return;}
- if(strstr(name,"concussion")){StunPeds(p,10.0f,3000,player);return;}
+ if(StunGrenade(explosion.id,explosion.weapon,p,player))return;
+ if(explosion.kind==2){StunPeds(p,12.0f,5000,player);return;}
  if(strstr(name,"smoke"))return;
  CExplosion::AddExplosion(nullptr,player,EXPLOSION_GRENADE,p,1,1,0.0f,0);
  auto& native=aExplosions[slot];
@@ -260,6 +325,9 @@ DWORD lastAutoResupply=0;
 void AutoResupply(){
  if(!infiniteAmmo||!active||!guest.ready||GetTickCount()-lastAutoResupply<1500)return;
  if(guest.stock>0&&featureState.lethalAmmo>0)return;
+ // MW2 raises the detonator only once the C4 ammo is spent. Hold the refill
+ // while thrown C4 waits to be detonated, unless the gun is fully empty.
+ if(c4Placed&&(guest.stock>0||guest.clip>0))return;
  lastAutoResupply=GetTickCount();RequestSilent(2,0);
 }
 // IW4's claymore trigger only sees IW4 players. Once a planted claymore is

@@ -15,8 +15,10 @@ pub struct HostTriangle {
 const _: () = assert!(std::mem::size_of::<HostTriangle>() == 40);
 #[derive(Debug)]
 struct Surface {
-    planes: [[f32; 4]; 5],
-    flags: [u32; 5],
+    /// Face, back face and three edge planes first, then bevels; only the
+    /// first `count` are used.
+    planes: [[f32; 4]; MAX_PLANES],
+    count: usize,
     mins: [f32; 3],
     maxs: [f32; 3],
     /// Host entity identity for movable vehicles, peds and props; 0 is static.
@@ -81,7 +83,7 @@ fn player_capsule(input: GroundTraceInput) -> Capsule {
 fn hull_contact(cap: Capsule, surface: &Surface) -> ContactResult {
     capsule_plane_hull(
         cap,
-        surface.planes.iter().map(|p| Plane {
+        surface.planes().iter().map(|p| Plane {
             normal: Vec3::from([f64::from(p[0]), f64::from(p[1]), f64::from(p[2])]),
             d: f64::from(p[3]),
         }),
@@ -90,6 +92,49 @@ fn hull_contact(cap: Capsule, surface: &Surface) -> ContactResult {
 fn normalized(v: [f32; 3]) -> Option<[f32; 3]> {
     let length = dot(v, v).sqrt();
     (length.is_finite() && length > 0.001).then(|| v.map(|c| c / length))
+}
+/// The prism's own five planes, then at most six axial bevels and two per
+/// edge and axis.
+const MAX_PLANES: usize = 5 + 6 + 3 * 3 * 2;
+impl Surface {
+    fn planes(&self) -> &[[f32; 4]] {
+        &self.planes[..self.count]
+    }
+}
+/// Adds the bevel planes IW4's map compiler gives every brush. The capsule
+/// sweep pushes each plane out by the capsule's extent along its normal;
+/// without bevels, faces meeting at an angle push the brush out past its own
+/// edges and corners, so a player walking from a stair ramp onto its landing
+/// or over a slope change between road models runs into solid that is not
+/// there. Each bevel is a plane through the prism's farthest point in its
+/// direction, so it never removes genuine solid, only those overhangs.
+fn add_bevels(surface: &mut Surface, triangle: [[f32; 3]; 3], normal: [f32; 3]) {
+    let mut corners = [[0.0; 3]; 6];
+    for (i, v) in triangle.into_iter().enumerate() {
+        corners[i] = std::array::from_fn(|k| v[k] + normal[k] * 0.02);
+        corners[i + 3] = std::array::from_fn(|k| v[k] - normal[k] * 0.02);
+    }
+    let axes = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+    let [a, b, c] = triangle;
+    let edges = [subtract(b, a), subtract(c, b), subtract(a, c)];
+    let directions = axes
+        .into_iter()
+        .map(Some)
+        .chain(edges.into_iter().flat_map(|edge| axes.map(|axis| normalized(cross(edge, axis)))))
+        .flatten()
+        .flat_map(|n: [f32; 3]| [n, n.map(|c| -c)]);
+    for n in directions {
+        // A plane the brush already has, or nearly so, adds nothing.
+        if surface.planes().iter().any(|p| dot(n, [p[0], p[1], p[2]]) > 0.9999) {
+            continue;
+        }
+        let farthest = corners
+            .iter()
+            .map(|&v| dot(n, v))
+            .fold(f32::NEG_INFINITY, f32::max);
+        surface.planes[surface.count] = [n[0], n[1], n[2], farthest];
+        surface.count += 1;
+    }
 }
 impl HostCollision {
     #[cfg(test)]
@@ -113,34 +158,35 @@ impl HostCollision {
             let Some(normal) = normalized(cross(subtract(b, a), subtract(c, a))) else {
                 continue;
             };
-            let mut planes = [[0.0; 4]; 5];
+            let mins = std::array::from_fn(|i| a[i].min(b[i]).min(c[i]) - 0.03);
+            let maxs = std::array::from_fn(|i| a[i].max(b[i]).max(c[i]) + 0.03);
+            // Material mapping currently uses generic solid. GTA retains the
+            // actual surface material for bullet impacts and world responses.
+            let mut surface = Surface {
+                planes: [[0.0; 4]; MAX_PLANES],
+                count: 5,
+                mins,
+                maxs,
+                tag: triangle.surface >> 8,
+            };
             let distance = dot(normal, a);
             // A thin closed prism supplies both sides of each genuine GTA face
             // to the existing IW4 brush/capsule trace implementation.
-            planes[0] = [normal[0], normal[1], normal[2], distance + 0.02];
-            planes[1] = [-normal[0], -normal[1], -normal[2], -distance + 0.02];
+            surface.planes[0] = [normal[0], normal[1], normal[2], distance + 0.02];
+            surface.planes[1] = [-normal[0], -normal[1], -normal[2], -distance + 0.02];
             let mut valid = true;
             for (i, (start, end)) in [(a, b), (b, c), (c, a)].into_iter().enumerate() {
                 let Some(outward) = normalized(cross(subtract(end, start), normal)) else {
                     valid = false;
                     break;
                 };
-                planes[i + 2] = [outward[0], outward[1], outward[2], dot(outward, start)];
+                surface.planes[i + 2] = [outward[0], outward[1], outward[2], dot(outward, start)];
             }
             if !valid {
                 continue;
             }
-            let mins = std::array::from_fn(|i| a[i].min(b[i]).min(c[i]) - 0.03);
-            let maxs = std::array::from_fn(|i| a[i].max(b[i]).max(c[i]) + 0.03);
-            // Material mapping currently uses generic solid. GTA retains the
-            // actual surface material for bullet impacts and world responses.
-            surfaces.push(Surface {
-                planes,
-                flags: [0; 5],
-                mins,
-                maxs,
-                tag: triangle.surface >> 8,
-            });
+            add_bevels(&mut surface, [a, b, c], normal);
+            surfaces.push(surface);
         }
         Self { surfaces }
     }
@@ -386,9 +432,9 @@ impl CollisionBackend for HostCollision {
                     (0..3).all(|i| surface.mins[i] <= maxs[i] && surface.maxs[i] >= mins[i])
                 })
                 .map(|surface| BrushRef {
-                    planes: &surface.planes,
+                    planes: surface.planes(),
                     contents: 1,
-                    plane_surface_flags: &surface.flags,
+                    plane_surface_flags: &[],
                     glass_encoded: 0,
                 }),
             input.start,
@@ -602,6 +648,156 @@ mod tests {
         // Nothing to step over in open space.
         let scene = HostCollision::from_triangles(&[floor()], [0.0; 3]);
         assert!(unblock(&scene, origin).unwrap_err().fraction >= 0.5);
+    }
+    /// Two triangles spanning the quad `p` (in metres, GTA coordinates).
+    fn quad(p: [[f32; 3]; 4]) -> [HostTriangle; 2] {
+        [
+            HostTriangle {
+                vertices: [p[0], p[1], p[2]],
+                surface: 0,
+            },
+            HostTriangle {
+                vertices: [p[0], p[2], p[3]],
+                surface: 0,
+            },
+        ]
+    }
+    /// Walks a standing capsule along +x the way IW4's step-slide move does:
+    /// a move blocked on the ground is retried 18 units higher and then put
+    /// back down. Returns how far it got, in IW4 units, from `from` towards `to`.
+    fn walk(scene: &HostCollision, from: f32, to: f32, height: f32) -> f32 {
+        const STEP: f32 = 18.0;
+        let down = |at: [f32; 3]| trace(scene, at, [at[0], at[1], at[2] - 3.0 * STEP]);
+        let rest = down([from, 0.0, height]);
+        assert_eq!(rest.startsolid, 0, "the walk must start in open space");
+        let mut origin = rest.endpos;
+        while origin[0] < to {
+            let standing = trace(scene, origin, origin);
+            assert_eq!(
+                (standing.startsolid, standing.allsolid),
+                (0, 0),
+                "resting on the ground must not be solid at {origin:?}"
+            );
+            let ahead = [origin[0] + 2.0, origin[1], origin[2]];
+            let flat = trace(scene, origin, ahead);
+            let next = if flat.fraction == 1.0 {
+                ahead
+            } else {
+                let up = [origin[0], origin[1], origin[2] + STEP];
+                let raised = trace(scene, origin, up);
+                let over = trace(
+                    scene,
+                    raised.endpos,
+                    [raised.endpos[0] + 2.0, origin[1], raised.endpos[2]],
+                );
+                if over.startsolid != 0 || over.fraction == 0.0 {
+                    return origin[0] - from;
+                }
+                over.endpos
+            };
+            let landed = down([next[0], next[1], next[2] + 1.0]);
+            if landed.startsolid != 0 || landed.fraction == 1.0 || landed.endpos[0] <= origin[0] {
+                return origin[0] - from;
+            }
+            origin = landed.endpos;
+        }
+        to - from
+    }
+    #[test]
+    fn walking_up_and_down_ramp_stairs_does_not_snag_at_either_end() {
+        // GTA stairs are usually one slope per flight: floor, a ramp 1.4 m
+        // long, then a landing, each its own pair of triangles. IW4 walks
+        // slopes up to about 45 degrees.
+        for degrees in [25.0f32, 35.0, 42.0] {
+            let rise = 1.4 * degrees.to_radians().tan();
+            let mut triangles = Vec::new();
+            triangles.extend(quad([[-3.0, -2.0, 0.0], [0.0, -2.0, 0.0], [0.0, 2.0, 0.0], [-3.0, 2.0, 0.0]]));
+            triangles.extend(quad([[0.0, -2.0, 0.0], [1.4, -2.0, rise], [1.4, 2.0, rise], [0.0, 2.0, 0.0]]));
+            triangles.extend(quad([[1.4, -2.0, rise], [4.0, -2.0, rise], [4.0, 2.0, rise], [1.4, 2.0, rise]]));
+            let scene = HostCollision::from_triangles(&triangles, [0.0; 3]);
+            let up = walk(&scene, -2.0 * UNITS_PER_METER, 3.0 * UNITS_PER_METER, 30.0);
+            assert!(up >= 5.0 * UNITS_PER_METER - 2.0, "{degrees} degrees: stuck going up after {up} units");
+            let mirrored: Vec<HostTriangle> = triangles
+                .iter()
+                .map(|t| HostTriangle {
+                    vertices: t.vertices.map(|v| [1.4 - v[0], v[1], v[2]]),
+                    surface: 0,
+                })
+                .collect();
+            let scene = HostCollision::from_triangles(&mirrored, [0.0; 3]);
+            let top = rise * UNITS_PER_METER;
+            let down = walk(&scene, -2.0 * UNITS_PER_METER, 3.0 * UNITS_PER_METER, top + 30.0);
+            assert!(down >= 5.0 * UNITS_PER_METER - 2.0, "{degrees} degrees: stuck going down after {down} units");
+        }
+    }
+    #[test]
+    fn walking_up_block_steps_does_not_snag() {
+        // Stairs modelled as one box per step: 0.18 m rise, 0.3 m tread.
+        let mut triangles = quad([[-3.0, -2.0, 0.0], [6.0, -2.0, 0.0], [6.0, 2.0, 0.0], [-3.0, 2.0, 0.0]]).to_vec();
+        for i in 0..8 {
+            let x = i as f32 * 0.3;
+            triangles.extend(host_box([x, -2.0, 0.0], [6.0, 2.0, 0.18 * (i + 1) as f32], 0));
+        }
+        let scene = HostCollision::from_triangles(&triangles, [0.0; 3]);
+        let walked = walk(&scene, -2.0 * UNITS_PER_METER, 4.0 * UNITS_PER_METER, 30.0);
+        assert!(walked >= 6.0 * UNITS_PER_METER - 2.0, "stuck after {walked} units");
+    }
+    #[test]
+    fn bevels_keep_walls_and_floors_solid() {
+        // Walking into a wall at an angle still stops at the wall.
+        let wall = HostTriangle {
+            vertices: [[2.54, -20.0, -20.0], [2.54, 20.0, -20.0], [2.54, 0.0, 20.0]],
+            surface: 0,
+        };
+        let scene = HostCollision::from_triangles(&[wall, floor()], [0.0; 3]);
+        let hit = trace(&scene, [0.0, 0.0, 0.5], [200.0, 60.0, 0.5]);
+        assert!(hit.fraction < 0.45 && hit.endpos[0] < 2.54 * UNITS_PER_METER - 14.0, "{hit:?}");
+        // Seams between the two triangles of a floor never let the player drop.
+        let scene = HostCollision::from_triangles(
+            &quad([[-2.0, -2.0, 0.0], [2.0, -2.0, 0.0], [2.0, 2.0, 0.0], [-2.0, 2.0, 0.0]]),
+            [0.0; 3],
+        );
+        for x in [-40.0, -10.0, 0.0, 0.01, 10.0, 40.0] {
+            let land = trace(&scene, [x, x, 20.0], [x, x, -20.0]);
+            assert!(land.fraction < 1.0 && land.normal[2] > 0.99, "{x}: {land:?}");
+        }
+    }
+    #[test]
+    fn walking_across_bridge_road_seams_does_not_snag() {
+        // Road models meet with a slope change, a few millimetres of height
+        // mismatch and a hairline overlap or gap.
+        for (grade, mismatch, joint) in [
+            (6.0f32, 0.005f32, 0.01f32),
+            (6.0, -0.005, -0.01),
+            (-6.0, 0.005, 0.0),
+            (12.0, 0.01, 0.02),
+            (0.0, 0.008, -0.005),
+        ] {
+            for crest in [false, true] {
+            let z = 10.0 * grade.to_radians().tan();
+            // A crest: the first piece climbs towards the joint.
+            let rise = if crest { 10.0 * 6f32.to_radians().tan() } else { 0.0 };
+            let mut triangles = Vec::new();
+            triangles.extend(quad([
+                [-10.0, -4.0, -rise],
+                [0.0 + joint, -4.0, 0.0],
+                [0.0 + joint, 4.0, 0.0],
+                [-10.0, 4.0, -rise],
+            ]));
+            triangles.extend(quad([
+                [0.0, -4.0, mismatch],
+                [10.0, -4.0, mismatch + z],
+                [10.0, 4.0, mismatch + z],
+                [0.0, 4.0, mismatch],
+            ]));
+            let scene = HostCollision::from_triangles(&triangles, [0.0; 3]);
+            let walked = walk(&scene, -5.0 * UNITS_PER_METER, 5.0 * UNITS_PER_METER, 30.0);
+            assert!(
+                walked >= 10.0 * UNITS_PER_METER - 2.0,
+                "grade {grade} mismatch {mismatch} joint {joint} crest {crest}: stuck after {walked} units"
+            );
+            }
+        }
     }
     fn trace(scene: &HostCollision, start: [f32; 3], end: [f32; 3]) -> Trace {
         scene.trace(GroundTraceInput {

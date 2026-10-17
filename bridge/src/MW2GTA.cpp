@@ -310,7 +310,14 @@ void Exchange(CPed* ped){
   host.buttons=0;
   if(active&&!settings&&!weaponMenu&&Focused()){
    if(Down(VK_LBUTTON))host.buttons|=1;if(Down(VK_RBUTTON))host.buttons|=2;
-   if(Down('R'))host.buttons|=4;if(Down('2'))host.buttons|=8;
+   // Weapon switching: 2 or wheel down for next, 1 or wheel up for previous.
+   // A wheel notch lasts one frame; hold it briefly so IW4 sees the press.
+   static DWORD wheelNextUntil=0,wheelPrevUntil=0;
+   if(CPad::NewMouseControllerState.wheelDown)wheelNextUntil=GetTickCount()+120;
+   if(CPad::NewMouseControllerState.wheelUp)wheelPrevUntil=GetTickCount()+120;
+   if(Down('R'))host.buttons|=4;
+   if(Down('2')||static_cast<int>(wheelNextUntil-GetTickCount())>0)host.buttons|=8;
+   if(Down('1')||static_cast<int>(wheelPrevUntil-GetTickCount())>0)host.buttons|=65536;
    if(Down('W'))host.buttons|=16;if(Down('S'))host.buttons|=32;if(Down('A'))host.buttons|=64;if(Down('D'))host.buttons|=128;
    if(Down(VK_SHIFT))host.buttons|=256;if(Down(VK_SPACE))host.buttons|=512;if(Down('C'))host.buttons|=1024;if(Down(VK_CONTROL))host.buttons|=2048;
    if(Down('G'))host.buttons|=4096;if(Down('H'))host.buttons|=8192;
@@ -366,8 +373,12 @@ void AfterInput(){
   active=true;BeginMovement(ped);BeginWorldReaction();Log("IW4 pmove authority active; GTA locomotion disabled");
  }
  DWORD now=GetTickCount();host.dt=std::clamp((now-lastTime)/1000.0f,0.001f,0.1f);lastTime=now;
- if(focused&&settings){auto mouse=CPad::NewMouseControllerState;uiX=std::clamp(uiX+mouse.x*2.0f,0.0f,static_cast<float>(RsGlobal.maximumWidth));uiY=std::clamp(uiY+mouse.y*2.0f,0.0f,static_cast<float>(RsGlobal.maximumHeight));}
- if(focused&&!settings&&!weaponMenu){auto mouse=CPad::NewMouseControllerState;mouseTotalX+=mouse.x;mouseTotalY+=mouse.y;}
+ // GTA flips its mouse movement by its own "invert mouse" options (except
+ // while its menu is up). MW2 takes the real movement, plus its own option.
+ CVector2D mouse(CPad::NewMouseControllerState.x,CPad::NewMouseControllerState.y);
+ if(!*reinterpret_cast<uint8_t*>(0xBA67A4)){if(CMenuManager::bInvertMouseX)mouse.x=-mouse.x;if(CMenuManager::bInvertMouseY)mouse.y=-mouse.y;}
+ if(focused&&settings){uiX=std::clamp(uiX+mouse.x*2.0f,0.0f,static_cast<float>(RsGlobal.maximumWidth));uiY=std::clamp(uiY+mouse.y*2.0f,0.0f,static_cast<float>(RsGlobal.maximumHeight));}
+ if(focused&&!settings&&!weaponMenu){mouseTotalX+=mouse.x;mouseTotalY+=invertMouse?-mouse.y:mouse.y;}
  auto* pad=CPad::GetPad(0);
  MaintainWorldReaction();
  pad->bDisablePlayerEnterCar=pad->bDisablePlayerDuck=pad->bDisablePlayerFireWeapon=pad->bDisablePlayerFireWeaponWithL1=pad->bDisablePlayerCycleWeapon=pad->bDisablePlayerJump=pad->bDisablePlayerDisplayVitalStats=1;
@@ -481,6 +492,17 @@ void InstallCaptureHook(){
  auto** table=*reinterpret_cast<void***>(device);originalPresent=reinterpret_cast<PresentFunction>(table[17]);
  if(!originalPresent)return;DWORD old=0;if(VirtualProtect(table+17,sizeof(void*),PAGE_EXECUTE_READWRITE,&old)){table[17]=reinterpret_cast<void*>(PresentHook);DWORD ignored;VirtualProtect(table+17,sizeof(void*),old,&ignored);Log("Installed private framebuffer capture hook");}
 }
+// F7 checkboxes, saved to MW2GTA.ini. Help text is not saved: it starts
+// shown every session.
+struct SettingOption {bool* value;const char* label;const wchar_t* key;};
+const SettingOption Settings[]={
+ {&showHelpText,"Show top help text",L"ShowHelpText"},
+ {&infiniteAmmo,"Infinite ammo (auto refill)",L"InfiniteAmmo"},
+ {&healthRegen,"MW2 health regeneration",L"HealthRegen"},
+ {&peacefulWorld,"Peaceful world (police and NPCs leave you alone)",L"PeacefulWorld"},
+ {&invertMouse,"Invert MW2 mouse (up/down)",L"InvertMouse"},
+};
+constexpr int SettingCount=static_cast<int>(std::size(Settings));
 void Draw(){
  if(!shared)return;
  if(hudFixtureUntil){static char label[]="MW2 HUD TEST";if(GetTickCount()<hudFixtureUntil){CHud::m_pZoneName=label;CHud::m_pLastZoneName=label;CHud::m_ZoneToPrint=label;CHud::m_ZoneState=1;CHud::m_ZoneFadeTimer=1000;CHud::m_ZoneNameTimer=0;}else{CHud::m_pZoneName=hudFixtureOriginalZone;CHud::m_pLastZoneName=nullptr;CHud::m_ZoneState=0;hudFixtureUntil=0;}}
@@ -488,6 +510,10 @@ void Draw(){
  ++renderedFrames;
  if(child.hProcess&&GetTickCount()-lastReport>1000){WatchRuntime();EnumWindows(MoveGuestWindow,child.dwProcessId);lastReport=GetTickCount();char msg[320];sprintf_s(msg,"status requested=%d active=%d guest-ready=%u frame=%u accepted=%u hits=%u ammo=%d vehicle=%d controls=%u cutscene=%d",requested,active,guest.ready,lastFrame,received,hits,guest.clip,FindPlayerPed()?FindPlayerPed()->bInVehicle:0,CPad::GetPad(0)->DisablePlayerControls,CCutsceneMgr::ms_running);Log(msg);
   float seconds=std::max(.001f,(GetTickCount()-lastFpsTime)/1000.0f);char perf[200];sprintf_s(perf,"performance host-fps=%.1f texture-fps=%.1f movement=%u movement-age=%lu triangles=%zu sprint=%u grounded=%u",renderedFrames/seconds,uploadedFrames/seconds,guestMovement.sequence,GetTickCount()-guestMovement.tick,sceneTriangles.size(),(guestMovement.pmFlags&0x4000)!=0,guestMovement.grounded);Log(perf);renderedFrames=0;uploadedFrames=0;lastFpsTime=GetTickCount();
+  // Whether MW2 drew its gun (sampled non-key pixels) and whether GTA has the
+  // player near or in fire: separates a missing guest image from a host one.
+  if(active){size_t drawn=0,sampled=0;for(size_t i=0;i+3<pixels.size();i+=4*97){const uint8_t* q=pixels.data()+i;sampled++;if(!(q[0]>200&&q[2]>200&&q[1]<60))drawn++;}
+   auto* ped=FindPlayerPed();char view[200];sprintf_s(view,"overlay drawn=%zu/%zu texture=%d on-fire=%d health=%.0f",drawn,sampled,texture!=nullptr,ped&&ped->m_pFire!=nullptr,ped?ped->m_fHealth:0.0f);Log(view);}
   if(active)if(auto* wanted=FindPlayerWanted()){char line[200];sprintf_s(line,"GTA pursuit wanted=%u chaos=%u cops=%u/%u cap=%u backoff=%d/%d/%d/%d health=%.1f",wanted->m_nWantedLevel,wanted->m_nChaosLevel,wanted->m_nCopsInPursuit,wanted->m_nMaxCopsInPursuit,CWanted::MaximumWantedLevel,wanted->m_bPoliceBackOff,wanted->m_bEverybodyBackOff,wanted->m_bPoliceBackOffGarage,wanted->m_bLeavePlayerAlone,FindPlayerPed()?FindPlayerPed()->m_fHealth:0);Log(line);}
  }
  if(!FrontEndMenuManager.m_bMenuActive && (requested||active||!runtimeError.empty())){
@@ -495,12 +521,16 @@ void Draw(){
   char status[260];
   if(active && settings)sprintf_s(status,"MW2 FOV %.0f - drag slider, click options - F7 close",fov);
   else if(active&&!showHelpText)status[0]=0;
-  else if(active)sprintf_s(status,"MW2 F8 weapons / F9 ammo / G grenade/explosives (%d) / H tactical (%d) / V melee / E use / F7 more options - ammo %d / %d - HP %.0f / wanted %u",featureState.lethalAmmo,featureState.tacticalAmmo,guest.clip,guest.stock,FindPlayerPed()?std::max(0.0f,FindPlayerPed()->m_fHealth):0.0f,FindPlayerWanted()?FindPlayerWanted()->m_nWantedLevel:0);
+  else if(active)sprintf_s(status,"MW2 F8 weapons / 1-2 or wheel switch / F9 ammo / G grenade/explosives (%d) / H tactical (%d) / V melee / E use / F7 more options - ammo %d / %d - HP %.0f / wanted %u",featureState.lethalAmmo,featureState.tacticalAmmo,guest.clip,guest.stock,FindPlayerPed()?std::max(0.0f,FindPlayerPed()->m_fHealth):0.0f,FindPlayerWanted()?FindPlayerWanted()->m_nWantedLevel:0);
   else if(!runtimeError.empty())sprintf_s(status,"%s",runtimeError.c_str());
   else if(guest.ready&&GetTickCount()-guest.tick<1500){auto* ped=FindPlayerPed();sprintf_s(status,ped&&ped->bInVehicle?"MW2 ready - leave vehicle to use - F6 exit":"MW2 ready - waiting for GTA controls - F6 exit");}
   else sprintf_s(status,"MW2 loading weapons... %lus - F6 cancels",(GetTickCount()-runtimeStarted)/1000);
   if(active&&!settings)CFont::SetScale(.42f,.8f);
-  if(status[0])CFont::PrintString(15.0f,static_cast<float>(RsGlobal.maximumHeight)-35.0f,status);
+  // Top left, clear of the MW2 gun and hands; wrap before GTA's money,
+  // weapon and clock in the top right.
+  CFont::SetWrapx(static_cast<float>(RsGlobal.maximumWidth)*.68f);
+  if(status[0])CFont::PrintString(15.0f,12.0f,status);
+  CFont::SetWrapx(static_cast<float>(RsGlobal.maximumWidth));
  }
  if(!active||FrontEndMenuManager.m_bMenuActive)return;
  auto* device=static_cast<IDirect3DDevice9*>(RwD3D9GetCurrentD3DDevice());if(!device)return;
@@ -523,18 +553,16 @@ void Draw(){
  DrawHostVitals(device,w,h);
  if(weaponMenu)Quad(device,w*.18f,h*.15f,w*.64f,h*.65f,0xf0181818);
  if(settings){
-  float x=w*.25f,y=h*.45f,width=w*.5f;
-  Quad(device,x-20,y-30,width+40,255,0xe0202020);Quad(device,x,y,width,10,0xff707070);
+  float x=w*.25f,y=h*.3f,width=w*.5f;
+  Quad(device,x-20,y-30,width+40,95+SettingCount*40.0f,0xe0202020);Quad(device,x,y,width,10,0xff707070);
   float position=(fov-50)/60;Quad(device,x+position*width-5,y-6,10,22,0xffffffff);
   POINT cursor{static_cast<LONG>(uiX),static_cast<LONG>(uiY)};
   Quad(device,uiX-5,uiY-1,10,2,0xff00ff00);Quad(device,uiX-1,uiY-5,2,10,0xff00ff00);
   if(Down(VK_LBUTTON)&&cursor.x>=x-10&&cursor.x<=x+width+10&&cursor.y>=y-20&&cursor.y<=y+30){fov=std::clamp(50+(cursor.x-x)/width*60,50.0f,110.0f);SaveFov();}
   // Checkbox rows: click the box or its label.
   static bool clickHeld=false;bool click=Down(VK_LBUTTON)&&!clickHeld;clickHeld=Down(VK_LBUTTON);
-  struct Option {bool* value;const char* label;const wchar_t* key;};
-  Option options[3]={{&showHelpText,"Show bottom help text",L"ShowHelpText"},{&infiniteAmmo,"Infinite ammo (auto refill)",L"InfiniteAmmo"},{&healthRegen,"MW2 health regeneration",L"HealthRegen"}};
   {
-   float rowY=y+45+3*40.0f;
+   float rowY=y+45+SettingCount*40.0f;
    Quad(device,x,rowY,22,22,0xffd0d0d0);Quad(device,x+3,rowY+3,16,16,0xff3070d0);
    if(click&&cursor.x>=x-5&&cursor.x<=x+width&&cursor.y>=rowY-6&&cursor.y<=rowY+28){
     resolutionChoice=(resolutionChoice+1)%ResolutionChoices;
@@ -542,23 +570,22 @@ void Draw(){
     RequestRuntimeRestart();
    }
   }
-  for(int i=0;i<3;i++){
+  for(int i=0;i<SettingCount;i++){
    float rowY=y+45+i*40.0f;
-   Quad(device,x,rowY,22,22,0xffd0d0d0);Quad(device,x+3,rowY+3,16,16,*options[i].value?0xff30c030:0xff303030);
-   if(click&&cursor.x>=x-5&&cursor.x<=x+width&&cursor.y>=rowY-6&&cursor.y<=rowY+28){*options[i].value=!*options[i].value;WritePrivateProfileStringW(L"Bridge",options[i].key,*options[i].value?L"1":L"0",iniPath.c_str());}
+   Quad(device,x,rowY,22,22,0xffd0d0d0);Quad(device,x+3,rowY+3,16,16,*Settings[i].value?0xff30c030:0xff303030);
+   if(click&&cursor.x>=x-5&&cursor.x<=x+width&&cursor.y>=rowY-6&&cursor.y<=rowY+28){*Settings[i].value=!*Settings[i].value;WritePrivateProfileStringW(L"Bridge",Settings[i].key,*Settings[i].value?L"1":L"0",iniPath.c_str());}
   }
  }
  saved->Apply();saved->Release();
  // GTA text only after the device state is restored; inside the raw D3D
  // section it renders with the overlay's state and corrupts the frame.
  if(settings){
-  float x=w*.25f,y=h*.45f;
-  const char* labels[]={"Show bottom help text","Infinite ammo (auto refill)","MW2 health regeneration"};
+  float x=w*.25f,y=h*.3f;
   CFont::SetScale(.5f,.85f);CFont::SetFontStyle(FONT_SUBTITLES);CFont::SetColor(CRGBA(255,255,255,255));CFont::SetDropColor(CRGBA(0,0,0,255));CFont::SetEdge(1);CFont::SetProportional(true);CFont::SetOrientation(ALIGN_LEFT);CFont::SetBackground(false,false);
-  for(int i=0;i<3;i++)CFont::PrintString(x+34,y+43+i*40.0f,labels[i]);
+  for(int i=0;i<SettingCount;i++)CFont::PrintString(x+34,y+43+i*40.0f,Settings[i].label);
   uint32_t rw=0,rh=0;ResolutionFor(resolutionChoice,rw,rh);
   char resolution[120];sprintf_s(resolution,"MW2 resolution: %s (%ux%u) - click to change, restarts MW2",ResolutionLabels[resolutionChoice],rw,rh);
-  CFont::PrintString(x+34,y+43+3*40.0f,resolution);
+  CFont::PrintString(x+34,y+43+SettingCount*40.0f,resolution);
  }
  DrawInventory();
 }
@@ -581,6 +608,8 @@ struct Plugin {
   resolutionChoice=std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Bridge",L"Resolution",2,iniPath.c_str())),0,ResolutionChoices-1);
   infiniteAmmo=GetPrivateProfileIntW(L"Bridge",L"InfiniteAmmo",0,iniPath.c_str())!=0;
   healthRegen=GetPrivateProfileIntW(L"Bridge",L"HealthRegen",1,iniPath.c_str())!=0;
+  peacefulWorld=GetPrivateProfileIntW(L"Bridge",L"PeacefulWorld",0,iniPath.c_str())!=0;
+  invertMouse=GetPrivateProfileIntW(L"Bridge",L"InvertMouse",0,iniPath.c_str())!=0;
   if(!CreateBridge()){Log("Failed to initialize shared memory");return;}
   constexpr uintptr_t call=0x53C104;
   if(*reinterpret_cast<uint8_t*>(call)!=0xe8){Log("Camera call site changed; plugin left inactive");return;}

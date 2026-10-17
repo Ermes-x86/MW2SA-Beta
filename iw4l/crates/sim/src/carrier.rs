@@ -223,6 +223,21 @@ impl SimWorld {
         true
     }
 
+    /// Caps a held weapon's clip and reserve together, for host rules such as
+    /// one C4 charge at a time. Returns the (clip, reserve) it removed from.
+    pub fn cap_ammo(&mut self, id: ClientId, weapon: u32, max: i32) -> Option<(i32, i32)> {
+        let mut frame = self.frame();
+        let clip = crate::script_player::ammo_clip(&frame, id, weapon);
+        let stock = crate::script_player::ammo_stock(&frame, id, weapon);
+        if clip + stock <= max {
+            return None;
+        }
+        let kept = clip.min(max);
+        crate::script_player::set_ammo_clip(&mut frame, id, weapon, kept);
+        crate::script_player::set_ammo_stock(&mut frame, id, weapon, max - kept);
+        Some((clip, stock))
+    }
+
     /// Fires the fuse of this client's live projectile on the next tick, for
     /// host-detected triggers (a host actor crossing a planted claymore).
     pub fn detonate_projectile(&mut self, owner: ClientId, id: u32) -> bool {
