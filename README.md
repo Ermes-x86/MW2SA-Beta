@@ -112,6 +112,7 @@ prepares MW2 assets and takes about a minute.
   after one.
 - With the Javelin, part of the arm (the sleeve) is drawn stretched in first
   person.
+- Tanks have no collision with the player for now: you can walk through them.
 
 ## Troubleshooting
 
