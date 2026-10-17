@@ -5,7 +5,7 @@
 > missing or unfinished features. Back up your GTA San Andreas saves before
 > playing, and press F6 at any time to return to normal GTA controls.
 
-> **Note:** this README was (mostly) AI generated. If something in the
+> **Note:** this README was (mostly) AI generated (Human Tested). If something in the
 > installation doesn't work, please let me know by
 > [opening an issue](../../issues).
 
