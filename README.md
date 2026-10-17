@@ -101,9 +101,9 @@ prepares MW2 assets and takes about a minute.
 
 ## Known limitations
 
-- GTA missions are not specifically supported: missions that require a
-  particular GTA weapon or GTA-only actions (climbing, swimming) may not work in
-  MW2 mode. Press F6 to switch back to GTA controls at any time.
+- GTA missions are not tested or supported in MW2 mode. Missions that need a
+  particular GTA weapon or GTA-only actions (climbing, swimming) may not work.
+  Press F6 to switch back to GTA controls at any time.
 - Water, ladders and moving platforms are not adapted to MW2 movement.
 - Flashbangs make GTA NPCs freeze in place; GTA has no blinded state.
 - Killstreaks, MW2 radar contacts and scoreboard are not integrated with GTA.
