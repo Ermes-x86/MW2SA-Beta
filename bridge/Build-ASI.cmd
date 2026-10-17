@@ -20,5 +20,5 @@ if not exist "%VCVARS32%" (
 )
 call "%VCVARS32%" >nul
 if not exist "%~dp0build" mkdir "%~dp0build"
-cl /nologo /std:c++latest /O2 /MT /EHsc /LD /DGTASA /DRW /DPLUGIN_SGV_10US /D_CRT_SECURE_NO_WARNINGS /I"%SDK%\shared" /I"%SDK%\shared\game" /I"%SDK%\shared\injector" /I"%SDK%\plugin_sa" /I"%SDK%\plugin_sa\game_sa" /I"%SDK%\plugin_sa\game_sa\enums" /I"%SDK%\plugin_sa\game_sa\rw" /I"%SDK%\shared\dxsdk" "%~dp0src\MW2GTA.cpp" /Fo"%~dp0build\MW2GTA.obj" /link /OUT:"%~dp0build\MW2GTA.asi" /PDB:"%~dp0build\MW2GTA.pdb" "%SDK%\output\lib\Plugin.lib" user32.lib gdi32.lib advapi32.lib
+cl /nologo /std:c++latest /O2 /MT /EHsc /LD /DGTASA /DRW /DPLUGIN_SGV_10US /D_CRT_SECURE_NO_WARNINGS /d1trimfile:"%SDK%\\" /d1trimfile:"%~dp0\" /I"%SDK%\shared" /I"%SDK%\shared\game" /I"%SDK%\shared\injector" /I"%SDK%\plugin_sa" /I"%SDK%\plugin_sa\game_sa" /I"%SDK%\plugin_sa\game_sa\enums" /I"%SDK%\plugin_sa\game_sa\rw" /I"%SDK%\shared\dxsdk" "%~dp0src\MW2GTA.cpp" /Fo"%~dp0build\MW2GTA.obj" /link /OUT:"%~dp0build\MW2GTA.asi" /PDB:"%~dp0build\MW2GTA.pdb" "%SDK%\output\lib\Plugin.lib" user32.lib gdi32.lib advapi32.lib
 exit /b %errorlevel%
