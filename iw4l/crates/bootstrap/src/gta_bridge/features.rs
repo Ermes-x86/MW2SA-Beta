@@ -128,15 +128,6 @@ pub(super) fn host_actions(
             );
         }
     }
-    // MW2 raises the C4 detonator only once no charge is left in hand, which
-    // with its two charges needs two throws. Keep one charge at a time so a
-    // single thrown C4 can be detonated; resupply refills it after that.
-    if let Some((weapon, record, tables)) = world.0.cap_detonator_ammo(local.0, 1) {
-        diag::info!(
-            Launch,
-            "GTA C4 limited to one charge: weapon={weapon} record={record:?} tables={tables:?}"
-        );
-    }
     let request = bridge.features.request;
     if request.sequence == 0 || request.sequence == bridge.features.received {
         return;

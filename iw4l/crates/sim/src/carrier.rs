@@ -223,46 +223,6 @@ impl SimWorld {
         true
     }
 
-    /// Keeps at most `max` charges of the held detonator weapon (C4), for host
-    /// rules such as one charge at a time. The offhand code counts charges in
-    /// the client ammo record and spends from the playerstate tables, so both
-    /// are capped. Returns the weapon and the (clip, reserve) of each before.
-    pub fn cap_detonator_ammo(
-        &mut self,
-        id: ClientId,
-        max: i32,
-    ) -> Option<(u32, (i32, i32), (i32, i32))> {
-        let mut frame = self.frame();
-        let weapons = frame.player(id)?.weapons;
-        let weapon = weapons
-            .iter()
-            .filter(|&&slot| slot > 0)
-            .map(|&slot| slot as u32)
-            .find(|&w| frame.equipment_facts_for(w).is_some_and(|e| e.has_detonator))?;
-        let record = frame.client_meta(id)?.ammo_for(weapon);
-        let tables = (
-            crate::script_player::ammo_clip(&frame, id, weapon),
-            crate::script_player::ammo_stock(&frame, id, weapon),
-        );
-        if record.0 + record.1 <= max && tables.0 + tables.1 <= max {
-            return None;
-        }
-        let facts = frame.combat_facts_for(weapon)?;
-        let clip_key = weapon_iw4::clip_table_key(facts.clip_index, weapon);
-        let ammo_key = weapon_iw4::ammo_table_key(facts.ammo_index, weapon);
-        let (clip, stock) = if clip_key != 0 { (max, 0) } else { (0, max) };
-        if let Some(ps) = frame.player_mut(id) {
-            if clip_key != 0 {
-                let _ = weapon_iw4::set_clip_for_hand(&mut ps.ammoclip, clip_key, 0, clip);
-            }
-            if ammo_key != 0 {
-                let _ = weapon_iw4::set_ammo_not_in_clip(&mut ps.ammo, ammo_key, stock);
-            }
-        }
-        frame.client_meta_mut(id).set_ammo(weapon, clip, stock);
-        Some((weapon, record, tables))
-    }
-
     /// Fires the fuse of this client's live projectile on the next tick, for
     /// host-detected triggers (a host actor crossing a planted claymore).
     pub fn detonate_projectile(&mut self, owner: ClientId, id: u32) -> bool {

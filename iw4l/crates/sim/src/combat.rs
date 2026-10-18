@@ -251,6 +251,16 @@ pub(crate) fn advance_weapon_command(
             return accepted;
         };
         let meta = world.client_meta(*id).cloned().unwrap_or_default();
+        // GTA: while a charge is planted the next lethal press detonates it,
+        // as when no charge is left, so one C4 can be set off on its own.
+        let mut planted = Vec::new();
+        if std::env::var_os("IW4L_GTA_BRIDGE").is_some() {
+            world.visit_projectiles(|p| {
+                if p.owner == *id && p.live {
+                    planted.push(p.weapon);
+                }
+            });
+        }
         let started_weapon = ps.weapon;
         let ammo_weapon = if started_weapon != 0 {
             started_weapon
@@ -480,7 +490,11 @@ pub(crate) fn advance_weapon_command(
                         } else {
                             eq.map(|e| e.offhand_class).unwrap_or(0)
                         },
-                        ammo: clip + stock,
+                        ammo: if eq.is_some_and(|e| e.has_detonator) && planted.contains(&weapon) {
+                            0
+                        } else {
+                            clip + stock
+                        },
                         hold_fire_time_ms: eq.map(|e| e.hold_fire_time_ms).unwrap_or(0),
                         fire_time_ms: combat.map(|f| f.fire_time_ms).unwrap_or(0),
                         fire_delay_ms: combat.map(|f| f.fire_delay_ms).unwrap_or(0),

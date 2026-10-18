@@ -52,6 +52,10 @@ GTA SA (x86) + MW2GTA.asi            IW4L runtime (x64)
   (`zone\<language>\common_mp.ff`).
 - Windows 10/11 64-bit and a DirectX 12 capable GPU.
 
+**Recommended** for smooth play at the best quality: at least a 4-core CPU,
+16 GB of RAM and a GPU with 2 GB of VRAM. GTA and MW2 run at the same time,
+so the PC needs room for both.
+
 ## Install
 
 1. Download `MW2-GTA-<version>.zip` from [Releases](../../releases) and extract it
@@ -111,8 +115,6 @@ prepares MW2 assets and takes about a minute.
 - Flashbangs make GTA NPCs freeze in place; GTA has no blinded state.
 - Killstreaks, MW2 radar contacts and scoreboard are not integrated with GTA.
 - Occasional short MW2 hitches can still happen.
-- C4 places two charges before the detonator comes up; it should come up
-  after one.
 - With the Javelin, part of the arm (the sleeve) is drawn stretched in first
   person.
 - Tanks have no collision with the player for now: you can walk through them.
