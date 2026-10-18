@@ -285,8 +285,11 @@ pub(crate) enum Finish {
 }
 
 pub(crate) fn god_mode(world: &FrameWorld, id: ClientId) -> bool {
-    world.bootstrap_ref().allow_debug_actions
-        && world.client_meta(id).is_some_and(|meta| meta.god_mode)
+    // GTA: only GTA damage counts. The MW2 player never dies, so a hard
+    // landing or an own explosion cannot respawn it with a new loadout.
+    std::env::var_os("IW4L_GTA_BRIDGE").is_some()
+        || world.bootstrap_ref().allow_debug_actions
+            && world.client_meta(id).is_some_and(|meta| meta.god_mode)
 }
 
 pub(crate) fn finish_damage(

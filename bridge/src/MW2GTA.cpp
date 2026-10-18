@@ -34,6 +34,8 @@
 #include "CWanted.h"
 #include "CExplosion.h"
 #include "CPedIntelligence.h"
+#include "CWaterLevel.h"
+#include "CTaskComplexJump.h"
 #include "CTaskSimpleStandStill.h"
 #include "FxManager_c.h"
 #include "FxSystem_c.h"
@@ -339,10 +341,68 @@ void Exchange(CPed* ped){
  TriggerSmoke(projectiles.data(),projectileCount);
  for(uint32_t i=0;i<explosionCount;i++)ConsumeExplosion(explosions[i],ped);
 }
+// Activities MW2 movement cannot play: GTA takes the player for them, as for
+// a vehicle, and the mod resumes once the activity has ended for a second.
+const char* gtaActivity=nullptr;
+// Jump pressed at a fence, wall or ledge: GTA's own jump climbs or vaults it.
+DWORD climbStarted=0;bool climbJumpPending=false;
+bool ClimbAhead(CPed* ped){
+ float r=yaw*Pi/180;CVector dir(std::cos(r),std::sin(r),0);
+ CVector foot=ped->GetPosition();foot.z-=1.0f;
+ for(float h:{.7f,1.2f,1.7f}){
+  CColPoint hit{};CEntity* e=nullptr;CVector a=foot+CVector(0,0,h);
+  if(CWorld::ProcessLineOfSight(a,a+dir*.9f,hit,e,true,true,false,true,false,false,false,false))return true;
+ }
+ return false;
+}
+const char* GtaOnlyActivity(CPed* ped){
+ if(!ped)return nullptr;
+ if(climbStarted){
+  bool busy=GetTickCount()-climbStarted<700||ped->bIsInTheAir||(ped->m_pIntelligence&&(ped->m_pIntelligence->GetTaskClimb()||ped->m_pIntelligence->GetTaskInAir()));
+  if(busy)return "climbing";
+  climbStarted=0;
+ }
+ if(auto* brain=ped->m_pIntelligence){
+  if(brain->GetTaskSwim())return "swimming";
+  if(brain->GetTaskJetPack())return "jetpack";
+  if(brain->GetTaskHold(false))return "carrying";
+ }
+ CVector p=ped->GetPosition();float foot=p.z-1.0f,water=-1000;
+ bool wet=CWaterLevel::GetWaterLevelNoWaves(p.x,p.y,p.z,&water);
+ if(wet&&water-foot>1.0f)return "swimming";
+ // Owning a parachute high above the ground: GTA's skydive takes the fall.
+ if(ped->m_aWeapons[11].m_eWeaponType==WEAPONTYPE_PARACHUTE){
+  bool found=false;float ground=CWorld::FindGroundZFor3DCoord(p.x,p.y,p.z,&found,nullptr);
+  if(wet)ground=std::max(ground,water);
+  if((found||wet)&&foot-ground>12.0f)return "parachute";
+ }
+ return nullptr;
+}
+// MW2 moves CJ with GTA physics off, so GTA never sees him land. Charge a
+// fall the way GTA would: from about 4 m it hurts, from about 26 m it kills.
+void ChargeFallDamage(CPed* ped){
+ static bool airborne=false;static float top=0;static uint32_t epoch=0;
+ if(!active||!ped||ped->m_fHealth<=0||guestMovement.epoch!=hostMovement.epoch||!guestMovement.sequence||epoch!=hostMovement.epoch){
+  airborne=false;epoch=hostMovement.epoch;return;
+ }
+ float z=guestMovement.foot[2];
+ if(!std::isfinite(z))return;
+ if(!guestMovement.grounded){if(!airborne||z>top)top=z;airborne=true;return;}
+ if(!airborne)return;
+ airborne=false;
+ float height=top-z;int damage=static_cast<int>((height-4.0f)*4.5f);
+ if(damage<=0)return;
+ // GTA's damage event scales fall damage far down, so take the health here
+ // and send only a token event for CJ's reaction and death handling.
+ ped->m_fHealth=std::max(0.0f,ped->m_fHealth-damage);
+ CWeapon::GenerateDamageEvent(ped,ped,WEAPONTYPE_FALL,1,static_cast<ePedPieceTypes>(3),0);
+ char line[96];sprintf_s(line,"GTA fall damage: %.1f m -> %d",height,damage);Log(line);
+}
 void AfterInput(){
  InputTimer timer;
  CPed* ped=FindPlayerPed();bool focused=Focused();
  MonitorHealth(ped);
+ ChargeFallDamage(ped);
  ProbeReactionFixture(ped);
  if(selfTest&&!requested&&!testStarted&&ped&&!CCutsceneMgr::ms_running){requested=StartRuntime();}
  if(focused&&Edge(VK_F6)){requested=!requested;if(requested&&!StartRuntime())requested=false;Log(requested?"MW2 requested":"MW2 disabled");}
@@ -362,9 +422,28 @@ void AfterInput(){
  }
  if(ped&&ped->bInVehicle)vehicleHandoffUntil=0;
  bool handoff=GetTickCount()<vehicleHandoffUntil;
+ bool jumpPressed=Edge(VK_SPACE);
+ if(active&&focused&&!weaponMenu&&!settings&&jumpPressed&&ped&&guestMovement.grounded&&ClimbAhead(ped)){
+  climbStarted=GetTickCount();climbJumpPending=true;Log("Climb handoff to GTA");
+ }
+ static DWORD activityUntil=0;
+ const char* activity=requested?GtaOnlyActivity(ped):nullptr;
+ // After a climb MW2 returns quickly; other activities wait a full second.
+ if(activity){activityUntil=GetTickCount()+(climbStarted?300:1000);if(activity!=gtaActivity){char line[96];sprintf_s(line,"GTA controls while %s",activity);Log(line);}gtaActivity=activity;}
+ else if(gtaActivity&&GetTickCount()>=activityUntil){Log("GTA activity ended; MW2 resumes");gtaActivity=nullptr;}
  bool scripted=CCutsceneMgr::ms_running||CPad::GetPad(0)->DisablePlayerControls!=0||TheCamera.m_bWideScreenOn;
- bool allowed=requested&&ready&&ped&&ped->m_fHealth>0&&!ped->bInVehicle&&!handoff&&!FrontEndMenuManager.m_bMenuActive&&!CTimer::m_UserPause&&!CTimer::m_CodePause&&!scripted;
- if(!allowed){Restore(!scripted);Exchange(ped);UpdateRuntimeRestart();return;}
+ bool allowed=requested&&ready&&ped&&ped->m_fHealth>0&&!ped->bInVehicle&&!handoff&&!gtaActivity&&!FrontEndMenuManager.m_bMenuActive&&!CTimer::m_UserPause&&!CTimer::m_CodePause&&!scripted;
+ if(!allowed){
+  Restore(!scripted);
+  // Face where the player looked and start GTA's own jump, whatever key it
+  // is bound to; it finds the obstacle and climbs or vaults it.
+  if(climbJumpPending&&ped&&!active){
+   climbJumpPending=false;float heading=(yaw-90)*Pi/180;
+   ped->m_fHeadingCurrent=ped->m_fHeadingGoal=heading;ped->SetHeading(heading);
+   if(ped->m_pIntelligence)ped->m_pIntelligence->m_TaskMgr.SetTask(new CTaskComplexJump(0),TASK_PRIMARY_PRIMARY,false);
+  }
+  Exchange(ped);UpdateRuntimeRestart();return;
+ }
  if(!active){
   controlled=ped;previousVisible=ped->bIsVisible;previousWeapon=ped->m_nSelectedWepSlot;
   SaveControlBlocks(CPad::GetPad(0));
@@ -523,6 +602,7 @@ void Draw(){
   else if(active&&!showHelpText)status[0]=0;
   else if(active)sprintf_s(status,"MW2 F8 weapons / 1-2 or wheel switch / F9 ammo / G grenade/explosives (%d) / H tactical (%d) / V melee / E use / F7 more options - ammo %d / %d - HP %.0f / wanted %u",featureState.lethalAmmo,featureState.tacticalAmmo,guest.clip,guest.stock,FindPlayerPed()?std::max(0.0f,FindPlayerPed()->m_fHealth):0.0f,FindPlayerWanted()?FindPlayerWanted()->m_nWantedLevel:0);
   else if(!runtimeError.empty())sprintf_s(status,"%s",runtimeError.c_str());
+  else if(guest.ready&&GetTickCount()-guest.tick<1500&&gtaActivity)sprintf_s(status,"MW2 paused - GTA controls while %s - F6 exit",gtaActivity);
   else if(guest.ready&&GetTickCount()-guest.tick<1500){auto* ped=FindPlayerPed();sprintf_s(status,ped&&ped->bInVehicle?"MW2 ready - leave vehicle to use - F6 exit":"MW2 ready - waiting for GTA controls - F6 exit");}
   else sprintf_s(status,"MW2 loading weapons... %lus - F6 cancels",(GetTickCount()-runtimeStarted)/1000);
   if(active&&!settings)CFont::SetScale(.42f,.8f);

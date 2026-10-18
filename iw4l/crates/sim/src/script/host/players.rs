@@ -183,6 +183,15 @@ pub(crate) fn owe(world: &mut World, client: u32, callback: &'static str, args: 
 }
 
 pub(crate) fn suicide(world: &mut World, tick: crate::Tick, client: u32) {
+    // GTA: the MW2 player follows CJ far outside the MW2 map, where the map's
+    // scripts would kill it and respawn it with a new loadout. Ignore that.
+    if std::env::var_os("IW4L_GTA_BRIDGE").is_some() {
+        static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            diag::info!(Sim, "GTA bridge: ignored a scripted suicide of client {client}");
+        }
+        return;
+    }
     let id = crate::ClientId(client);
     let mut frame = FrameWorld::from_world(world);
     if !frame

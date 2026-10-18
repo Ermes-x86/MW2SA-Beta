@@ -37,6 +37,11 @@ GTA SA (x86) + MW2GTA.asi            IW4L runtime (x64)
 - MW2-style health regeneration and optional infinite ammo.
 - The mod steps aside for cutscenes, menus and vehicles (press F near a car to
   get in) and resumes on foot.
+- GTA takes over automatically while CJ swims, uses a jetpack, carries an
+  object or skydives with a parachute, and when you jump (Space) at a fence,
+  wall or ledge, so CJ climbs or vaults it. MW2 comes back right after.
+- Only GTA damage counts: the MW2 player never dies or respawns. Falls while
+  in MW2 mode hurt CJ as in GTA.
 
 > **Beta.** Expect bugs. Mission scripts are not specifically
 > supported yet.
@@ -109,9 +114,10 @@ prepares MW2 assets and takes about a minute.
 ## Known limitations
 
 - GTA missions are not tested or supported in MW2 mode. Missions that need a
-  particular GTA weapon or GTA-only actions (climbing, swimming) may not work.
-  Press F6 to switch back to GTA controls at any time.
-- Water, ladders and moving platforms are not adapted to MW2 movement.
+  particular GTA item (camera, spray can), stealth or noise meters may not
+  work. Press F6 to switch back to GTA controls at any time.
+- Ladders and moving platforms (standing on a moving train or truck) are not
+  adapted to MW2 movement.
 - Flashbangs make GTA NPCs freeze in place; GTA has no blinded state.
 - Killstreaks, MW2 radar contacts and scoreboard are not integrated with GTA.
 - Occasional short MW2 hitches can still happen.
