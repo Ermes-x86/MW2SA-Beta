@@ -69,6 +69,9 @@ GTA SA (x86) + MW2GTA.asi            IW4L runtime (x64)
      (or `%LOCALAPPDATA%\MW2GTA` when GTA is under Program Files);
    - optionally creates a desktop shortcut.
 
+The mod only reads Modern Warfare 2. Other Call of Duty games installed on the
+PC (MW3, Black Ops, Black Ops II) are ignored.
+
 The installer **never deletes or changes save games** (GTA's are in
 `Documents\GTA San Andreas User Files`; MW2's folder is only read). Files it
 replaces are backed up to `<GTA>\MW2GTA-backup\<date>`.

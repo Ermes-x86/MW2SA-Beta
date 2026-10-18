@@ -57,7 +57,9 @@ pub fn link_steam_games(root: &GamesRoot) -> SteamProbe {
             (game, shortcut, folder)
         })
         .filter(|(game, shortcut, _)| {
-            root.0.join(shortcut).symlink_metadata().is_err() && !has_game(&roots, *game)
+            (*game == ZoneGame::Iw4 || !crate::discover::mw2_only())
+                && root.0.join(shortcut).symlink_metadata().is_err()
+                && !has_game(&roots, *game)
         })
         .collect::<Vec<_>>();
     if missing.is_empty() {

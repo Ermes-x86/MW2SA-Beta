@@ -80,6 +80,12 @@ const SIBLING_TITLES: [&str; 3] = [
 
 static GAME_FOLDERS: std::sync::RwLock<Vec<PathBuf>> = std::sync::RwLock::new(Vec::new());
 
+/// The GTA bridge plays MW2 only and sets `IW4L_GTA_BRIDGE` when it starts the
+/// runtime. Other Call of Duty installs are then neither linked nor searched.
+pub(crate) fn mw2_only() -> bool {
+    std::env::var_os("IW4L_GTA_BRIDGE").is_some()
+}
+
 pub fn set_game_folders(folders: Vec<PathBuf>) {
     let folders = folders
         .into_iter()
@@ -153,7 +159,7 @@ pub(crate) fn configured_search_roots(root: &Path) -> Vec<PathBuf> {
             roots.push(folder.clone());
         }
     }
-    if let Some(library) = root.parent() {
+    if let Some(library) = root.parent().filter(|_| !mw2_only()) {
         for title in SIBLING_TITLES {
             let sibling = library.join(title);
             if sibling != root && sibling.join("zone").is_dir() && !roots.contains(&sibling) {
@@ -177,6 +183,15 @@ pub(crate) fn configured_search_roots(root: &Path) -> Vec<PathBuf> {
         links.sort();
         for link_path in links {
             match shortcut_target_root(&link_path) {
+                Ok(target)
+                    if mw2_only() && !folder_holds_game(&target, crate::ZoneGame::Iw4) =>
+                {
+                    diag::info!(
+                        Zone,
+                        "GTA bridge: ignoring non-MW2 game shortcut {}",
+                        link_path.display()
+                    )
+                }
                 Ok(target) if !roots.contains(&target) => roots.push(target),
                 Ok(_) => {}
                 Err(error) => diag::warn!(
