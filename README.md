@@ -5,6 +5,14 @@
 > missing or unfinished features. Back up your GTA San Andreas saves before
 > playing, and press F6 at any time to return to normal GTA controls.
 
+> ⚖️ **YOU NEED TO OWN BOTH GAMES TO USE THIS MOD.** You need your own legal
+> copies of **Grand Theft Auto: San Andreas** and **Call of Duty: Modern
+> Warfare 2 (2009)**. This repository and its releases **do not contain any
+> game files**: no maps, models, textures, sounds, videos or executables
+> from either game. The mod only reads the games already
+> installed on your PC. Do not ask for game files here, and do not use
+> pirated copies. See [Legal notice](#legal-notice).
+
 > **Note:** this README was (mostly) AI generated (Human Tested). If something in the
 > installation doesn't work, please let me know by
 > [opening an issue](../../issues).
@@ -177,8 +185,28 @@ and must always be built and shipped together.
 
 ## License
 
-Apache License 2.0; see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+Apache License 2.0; see [LICENSE](LICENSE) and [NOTICE](NOTICE). The
+licence covers this project's own code only, not the games it works with.
 
-No game data is included. You need your own copies of GTA San Andreas and
-Call of Duty: Modern Warfare 2. This project is not affiliated with Activision,
-Infinity Ward, Rockstar Games or Take-Two Interactive.
+## Legal notice
+
+- **You must own both games.** MW2-GTA works only with your own legally
+  obtained copies of Grand Theft Auto: San Andreas and Call of Duty: Modern
+  Warfare 2 (2009), installed on your PC.
+- **No game content is distributed.** This repository and its releases
+  contain only the mod's own source code and the programs built from it
+  (`MW2GTA.asi`, `iw4l-gta.exe`, the installer). They contain no game
+  files or assets from either game. Game content is read at run time from
+  your own installations and stays on your PC.
+- **Do not share game files.** Issues, pull requests or comments that
+  contain or link to game files, cracks or pirated copies will be removed.
+- **Unofficial fan project.** MW2-GTA is a free, non-commercial fan mod. It
+  is not affiliated with, endorsed by or sponsored by Activision, Infinity
+  Ward, Rockstar Games or Take-Two Interactive.
+- **Trademarks.** Grand Theft Auto, San Andreas, Call of Duty and Modern
+  Warfare are trademarks of their respective owners and are used here only
+  to describe which games the mod works with.
+- **Use at your own risk.** The mod is provided "as is", without warranty
+  (see the [LICENSE](LICENSE)). Back up your saves before installing mods.
+- **Rights holders:** if you have a concern about this project, please
+  [open an issue](../../issues) and it will be addressed promptly.
