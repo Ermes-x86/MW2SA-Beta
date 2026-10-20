@@ -141,6 +141,8 @@ prepares MW2 assets and takes about a minute.
   work. Press F6 to switch back to GTA controls at any time.
 - Ladders and moving platforms (standing on a moving train or truck) are not
   adapted to MW2 movement.
+- Entering stores and other interiors (shops, Ammu-Nation, restaurants) does
+  not work yet in MW2 mode. Press F6 to switch to GTA controls to go inside.
 - Only three killstreaks (UAV, Care Package, Predator Missile) exist so far,
   and the MW2 scoreboard is not integrated with GTA.
 - Picking up ammo for an MW2 gun you already own does not refill it yet.
