@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use asset_core::AssetNamespace;
 use bevy::prelude::Resource;
 
-pub(crate) fn voice_prefixes_for_zone(
+/// The announcer voice prefixes (allies, axis) of the zone, e.g. `UK_`.
+pub fn voice_prefixes_for_zone(
     catalog: Option<&asset_game::MenuCatalog>,
     bank: Option<&crate::SoundBank>,
     identity: &frame::LaunchIdentity,

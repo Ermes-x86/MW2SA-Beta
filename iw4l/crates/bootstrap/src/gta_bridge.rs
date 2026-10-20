@@ -6,7 +6,9 @@ use std::ffi::c_void;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
+mod announcer;
 mod features;
+mod loadout;
 mod profiling;
 mod readback;
 
@@ -303,6 +305,7 @@ struct Bridge {
     mouse_total: [f32; 2],
     camera_sequence: u32,
     features: features::State,
+    announcer: announcer::State,
 }
 pub fn install(app: &mut App) {
     if std::env::var_os("IW4L_GTA_BRIDGE").is_none() {
@@ -347,6 +350,7 @@ pub fn install(app: &mut App) {
         mouse_total: [0.0; 2],
         camera_sequence: 0,
         features: features::State::default(),
+        announcer: announcer::State::default(),
     });
     if std::env::var_os("IW4L_GTA_PHASE_DIAGNOSTICS").is_some() {
         profiling::install(app);
@@ -371,6 +375,7 @@ pub fn install(app: &mut App) {
             .in_set(frame::ClientSet::Input)
             .before(net::sample_client_input),
     );
+    app.add_systems(Update, announcer::play);
     app.add_systems(
         Update,
         host_input
@@ -476,6 +481,8 @@ fn read_host(mut bridge: ResMut<Bridge>, mut exit: MessageWriter<AppExit>) {
         bridge.host_movement = unsafe { memory.read(HOST_MOVEMENT) };
         bridge.host_lock = unsafe { memory.read(HOST_LOCK) };
         bridge.features.request = unsafe { memory.read(features::BASE) };
+        bridge.announcer.request = unsafe { (memory.read(features::BASE + 48), memory.read(features::BASE + 52)) };
+        bridge.announcer.volume = unsafe { memory.read(features::BASE + 56) };
     }
     if let Some(_guard) = memory.lock_scene() {
         let sequence = unsafe { memory.read::<u32>(SCENE) };

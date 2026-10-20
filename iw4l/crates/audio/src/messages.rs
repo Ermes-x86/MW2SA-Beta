@@ -22,6 +22,12 @@ pub enum AliasCommand {
         sound: PlayAlias,
         pitch: f32,
     },
+    /// A sound played louder or quieter than its alias, e.g. the GTA bridge's
+    /// announcer volume.
+    PlayScaled {
+        sound: PlayAlias,
+        volume: f32,
+    },
     StopEntity {
         snd_ent: u32,
     },

@@ -50,6 +50,19 @@ GTA SA (x86) + MW2GTA.asi            IW4L runtime (x64)
   wall or ledge, so CJ climbs or vaults it. MW2 comes back right after.
 - Only GTA damage counts: the MW2 player never dies or respawns. Falls while
   in MW2 mode hurt CJ as in GTA.
+- Your loadout (guns, attachments, equipment) is remembered between sessions.
+- GTA weapons become MW2 guns: buy one at Ammu-Nation or get one from a cheat
+  or mission and you get the matching MW2 gun; guns on the ground are picked
+  up with E.
+- MW2 killstreaks for GTA kills, once per life as in MW2: UAV at 6 kills (a
+  plane circles overhead and every enemy shows on the radar for 30 s), Care
+  Package at 8 (a supply drop where you aim) and Predator Missile at 10 (steer
+  a missile from the sky).
+- The MW2 announcer reacts to the police (enemy UAV, enemy chopper, mission
+  success or failure), with its own volume.
+- MW2-style radar: enemies who fire an unsilenced gun appear on GTA's radar.
+- Flashbangs blind you and make GTA NPCs cough and cover their eyes; health
+  and armour are shown as rings around the radar.
 
 > **Beta.** Expect bugs. Mission scripts are not specifically
 > supported yet.
@@ -112,9 +125,11 @@ prepares MW2 assets and takes about a minute.
 | E | Use (e.g. pick up a thrown knife) |
 | G / H | Lethal equipment / tactical equipment |
 | F | Get into a nearby vehicle (MW2 mode returns when you get out) |
+| E (at a gun on the ground) | Pick up the gun (you get the matching MW2 gun) |
+| 4 / 5 / 6 | Use a killstreak: UAV / Care Package / Predator Missile |
 | F8 | Weapon and equipment menu (arrows to choose, Enter to equip) |
 | F9 | Refill ammo |
-| F7 | Options: FOV, help text, infinite ammo, health regeneration, peaceful world, invert mouse, MW2 resolution |
+| F7 | Options: FOV, announcer volume, text size, help text, infinite ammo, health regeneration, peaceful world, invert mouse, announcer on/off, MW2 resolution |
 
 **MW2 resolution** (F7): "Match GTA" renders MW2 at GTA's aspect ratio (up to
 1280x720); fixed sizes are also available. Changing it restarts the MW2 runtime.
@@ -126,8 +141,10 @@ prepares MW2 assets and takes about a minute.
   work. Press F6 to switch back to GTA controls at any time.
 - Ladders and moving platforms (standing on a moving train or truck) are not
   adapted to MW2 movement.
-- Flashbangs make GTA NPCs freeze in place; GTA has no blinded state.
-- Killstreaks, MW2 radar contacts and scoreboard are not integrated with GTA.
+- Only three killstreaks (UAV, Care Package, Predator Missile) exist so far,
+  and the MW2 scoreboard is not integrated with GTA.
+- Picking up ammo for an MW2 gun you already own does not refill it yet.
+- While steering the Predator Missile, CJ stands still and can be attacked.
 - Occasional short MW2 hitches can still happen.
 - With the Javelin, part of the arm (the sleeve) is drawn stretched in first
   person.

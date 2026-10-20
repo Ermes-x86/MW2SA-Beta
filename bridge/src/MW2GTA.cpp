@@ -37,9 +37,16 @@
 #include "CWaterLevel.h"
 #include "CTaskComplexJump.h"
 #include "CTaskSimpleStandStill.h"
+#include "CTaskSimpleChoking.h"
 #include "FxManager_c.h"
 #include "FxSystem_c.h"
 #include "CHud.h"
+#include "CRadar.h"
+#include "CPlane.h"
+#include "CPointLights.h"
+#include "CPickup.h"
+#include "CPickups.h"
+#include "CAudioEngine.h"
 #include "Protocol.h"
 
 namespace {
@@ -56,8 +63,8 @@ std::vector<CVector> grenadeCollisionCenters;
 bool weaponMenu=false;size_t selectedWeapon=0;
 bool menuAcceptHeld=false;
 DWORD hudFixtureUntil=0;char* hudFixtureOriginalZone=nullptr;
-uint32_t inventoryRequest=0,inventoryKind=0,inventoryWeapon=0,lastExplosion=0;
-DWORD inventoryNoticeUntil=0;std::string inventoryNotice;
+uint32_t inventoryRequest=0,inventoryKind=0,inventoryWeapon=0,lastExplosion=0,announceSequence=0,announceLine=0;
+DWORD inventoryNoticeUntil=0;std::string inventoryNotice;std::string pickupNotice;
 float mouseTotalX=0,mouseTotalY=0;
 Host host{};
 bool requested=false,active=false,settings=false,previousKeys[256]{};
@@ -183,7 +190,7 @@ bool StartRuntime(){
  STARTUPINFOW startup{};startup.cb=sizeof(startup);startup.dwFlags=STARTF_USESHOWWINDOW;startup.wShowWindow=SW_HIDE;
  bool okay=CreateProcessW(exe.c_str(),command.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,runtimeRoot.c_str(),&startup,&child)!=0;
  SetEnvironmentVariableW(L"IW4L_GTA_BRIDGE",nullptr);
-  if(okay){runtimeStarted=GetTickCount();unreadySince=0;runtimeWasReady=false;runtimeError.clear();guest={};lastShot=0;ReleaseTexture();Lock lock(controlMutex);if(lock.acquired){reinterpret_cast<Control*>(shared)->guest={};ZeroMemory(shared+FeaturesOffset,MappingSize-FeaturesOffset);reinterpret_cast<Features*>(shared+FeaturesOffset)->reserved[4]=GetCurrentProcessId();inventoryRequest=inventoryKind=inventoryWeapon=lastExplosion=0;featureState={};weaponCatalog.clear();}}
+  if(okay){runtimeStarted=GetTickCount();unreadySince=0;runtimeWasReady=false;runtimeError.clear();guest={};lastShot=0;ReleaseTexture();Lock lock(controlMutex);if(lock.acquired){reinterpret_cast<Control*>(shared)->guest={};ZeroMemory(shared+FeaturesOffset,MappingSize-FeaturesOffset);reinterpret_cast<Features*>(shared+FeaturesOffset)->reserved[4]=GetCurrentProcessId();inventoryRequest=inventoryKind=inventoryWeapon=lastExplosion=announceSequence=announceLine=0;featureState={};weaponCatalog.clear();}}
  else{char message[120];sprintf_s(message,"MW2 start failed (%lu). F6 retry",GetLastError());runtimeError=message;}
  Log(okay?"Started real IW4L weapon runtime":runtimeError.c_str());return okay;
 }
@@ -297,6 +304,7 @@ void Exchange(CPed* ped){
   if(availableExplosions>ExplosionCount){lastExplosion=feature->explosions-ExplosionCount;availableExplosions=ExplosionCount;Log("Explosion ring overflow");}
   while(availableExplosions--){++lastExplosion;auto& e=reinterpret_cast<Explosion*>(shared+ExplosionsOffset)[lastExplosion%ExplosionCount];if(e.sequence==lastExplosion)explosions[explosionCount++]=e;}
   feature->request=inventoryRequest;feature->kind=inventoryKind;feature->weapon=inventoryWeapon;
+  feature->reserved[2]=announceLine;feature->reserved[1]=announceSequence;memcpy(&feature->reserved[3],&announcerVolume,sizeof(float));
   auto* fixtureRequest=reinterpret_cast<uint32_t*>(shared+4544);
   if(active&&*fixtureRequest==0x54534554){*fixtureRequest=0;selfTest=true;testStarted=0;testDone=false;testTarget=0;testDistance=0;Log("Explicit NPC validation fixture requested");}
   auto* reactionRequest=reinterpret_cast<uint32_t*>(shared+4548);
@@ -306,11 +314,11 @@ void Exchange(CPed* ped){
   uint32_t available=guest.shots-lastShot;
   if(available>ShotCount){Log("Shot ring overflow; discarding oldest expired records");lastShot=guest.shots-ShotCount;available=ShotCount;}
   while(available--){++lastShot;const auto& s=c->shots[lastShot%ShotCount];if(s.sequence==lastShot)shots[count++]=s;}
-  host.tick=GetTickCount();host.enabled=active&&!settings&&!weaponMenu?1:0;
+  host.tick=GetTickCount();host.enabled=active&&!settings&&!weaponMenu&&!predator.active?1:0;
   host.yaw=yaw;host.pitch=pitch;host.fov=fov;host.health=ped?ped->m_fHealth:0;
   if(ped){auto p=Eye(ped);host.eye[0]=p.x;host.eye[1]=p.y;host.eye[2]=p.z;auto v=ped->m_vecMoveSpeed*50.0f;host.velocity[0]=v.x;host.velocity[1]=v.y;host.velocity[2]=v.z;}
   host.buttons=0;
-  if(active&&!settings&&!weaponMenu&&Focused()){
+  if(active&&!settings&&!weaponMenu&&!predator.active&&Focused()){
    if(Down(VK_LBUTTON))host.buttons|=1;if(Down(VK_RBUTTON))host.buttons|=2;
    // Weapon switching: 2 or wheel down for next, 1 or wheel up for previous.
    // A wheel notch lasts one frame; hold it briefly so IW4 sees the press.
@@ -406,8 +414,17 @@ void AfterInput(){
  ProbeReactionFixture(ped);
  if(selfTest&&!requested&&!testStarted&&ped&&!CCutsceneMgr::ms_running){requested=StartRuntime();}
  if(focused&&Edge(VK_F6)){requested=!requested;if(requested&&!StartRuntime())requested=false;Log(requested?"MW2 requested":"MW2 disabled");}
- if(focused&&active&&Edge(VK_F7)){weaponMenu=false;settings=!settings;if(settings){uiX=RsGlobal.maximumWidth*(.25f+.5f*(fov-50)/60);uiY=RsGlobal.maximumHeight*.45f;}else SaveFov();}
+ if(focused&&active&&Edge(VK_F7)){weaponMenu=false;settings=!settings;if(settings){uiX=RsGlobal.maximumWidth*.5f;uiY=RsGlobal.maximumHeight*.5f;}else SaveFov();}
  if(focused&&active)InventoryInput();
+ TrackPickups(ped);
+ WeaponPickupInput(ped);
+ PoliceAnnouncer(ped);
+ TrackRadarContacts(ped);
+ CountKills(ped);
+ UpdateCareDrops();
+ UpdateUavPlane(ped);
+ UpdateFlashLights();
+ for(int streak:{StreakUav,StreakCarePackage,StreakPredator})if(Edge(StreakKey(streak))&&focused&&active&&!weaponMenu&&!settings&&!predator.active&&ped)UseKillstreak(ped,streak);
  UpdateInventorySafety(ped);
  bool ready=guest.ready&&GetTickCount()-guest.tick<1500;
  if(selfTest && GetFileAttributesW(L"MW2GTA.selftest")!=INVALID_FILE_ATTRIBUTES && ped && CPad::GetPad(0)->DisablePlayerControls==0){DeleteFileW(L"MW2GTA.selftest");testStarted=0;testDone=false;testTarget=0;testDistance=0;Log("SELFTEST fixture reset requested");}
@@ -434,6 +451,7 @@ void AfterInput(){
  bool scripted=CCutsceneMgr::ms_running||CPad::GetPad(0)->DisablePlayerControls!=0||TheCamera.m_bWideScreenOn;
  bool allowed=requested&&ready&&ped&&ped->m_fHealth>0&&!ped->bInVehicle&&!handoff&&!gtaActivity&&!FrontEndMenuManager.m_bMenuActive&&!CTimer::m_UserPause&&!CTimer::m_CodePause&&!scripted;
  if(!allowed){
+  EndPredator(false);
   Restore(!scripted);
   // Face where the player looked and start GTA's own jump, whatever key it
   // is bound to; it finds the obstacle and climbs or vaults it.
@@ -457,7 +475,8 @@ void AfterInput(){
  CVector2D mouse(CPad::NewMouseControllerState.x,CPad::NewMouseControllerState.y);
  if(!*reinterpret_cast<uint8_t*>(0xBA67A4)){if(CMenuManager::bInvertMouseX)mouse.x=-mouse.x;if(CMenuManager::bInvertMouseY)mouse.y=-mouse.y;}
  if(focused&&settings){uiX=std::clamp(uiX+mouse.x*2.0f,0.0f,static_cast<float>(RsGlobal.maximumWidth));uiY=std::clamp(uiY+mouse.y*2.0f,0.0f,static_cast<float>(RsGlobal.maximumHeight));}
- if(focused&&!settings&&!weaponMenu){mouseTotalX+=mouse.x;mouseTotalY+=invertMouse?-mouse.y:mouse.y;}
+ if(focused&&!settings&&!weaponMenu&&!predator.active){mouseTotalX+=mouse.x;mouseTotalY+=invertMouse?-mouse.y:mouse.y;}
+ if(predator.active)UpdatePredator(focused?mouse:CVector2D(0,0));
  auto* pad=CPad::GetPad(0);
  MaintainWorldReaction();
  pad->bDisablePlayerEnterCar=pad->bDisablePlayerDuck=pad->bDisablePlayerFireWeapon=pad->bDisablePlayerFireWeaponWithL1=pad->bDisablePlayerCycleWeapon=pad->bDisablePlayerJump=pad->bDisablePlayerDisplayVitalStats=1;
@@ -480,7 +499,7 @@ void DistrictPrint(float x,float y,char* text){
 }
 void PrepareHostRender(){if(active&&controlled)ApplyMovement(controlled);UpdateCamera(&TheCamera);}
 void AfterScripts(){if(active&&!CCutsceneMgr::ms_running)MaintainWorldReaction();}
-void HidePlayerForScene(){if(active&&controlled&&controlled==FindPlayerPed())controlled->bIsVisible=false;}
+void HidePlayerForScene(){if(active&&!predator.active&&controlled&&controlled==FindPlayerPed())controlled->bIsVisible=false;}
 void RestorePlayerAfterScene(){if(active&&controlled&&controlled==FindPlayerPed())controlled->bIsVisible=previousVisible;}
 void UpdateCamera(CCamera* camera){
  if(!active||!controlled||!camera->m_pRwCamera)return;
@@ -495,6 +514,11 @@ void UpdateCamera(CCamera* camera){
   right=CVector(guestCamera.right[0],guestCamera.right[1],guestCamera.right[2]);
   up=CVector(guestCamera.up[0],guestCamera.up[1],guestCamera.up[2]);
   effective=guestCamera.fov;
+ }
+ if(predator.active){
+  float y=predator.yaw*Pi/180,p=predator.pitch*Pi/180;
+  forward=PredatorForward();right=CVector(-std::sin(y),std::cos(y),0);up=CVector(std::sin(p)*std::cos(y),std::sin(p)*std::sin(y),std::cos(p));
+  position=predator.position;effective=60.0f;
  }
  auto& cam=camera->m_aCams[camera->m_nActiveCam];
  cam.m_vecSource=position;cam.m_vecFront=forward;cam.m_vecUp=up;
@@ -520,13 +544,30 @@ void Quad(IDirect3DDevice9* device,float x,float y,float w,float h,DWORD color,I
  Vertex vertices[4]={{x-.5f,y-.5f,0,1,color,0,0},{x+w-.5f,y-.5f,0,1,color,1,0},{x-.5f,y+h-.5f,0,1,color,0,1},{x+w-.5f,y+h-.5f,0,1,color,1,1}};
  device->SetTexture(0,tex);device->SetFVF(D3DFVF_XYZRHW|D3DFVF_DIFFUSE|D3DFVF_TEX1);device->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP,2,vertices,sizeof(Vertex));
 }
+// A ring (or an arc of it, clockwise from `from`) around a centre.
+void Ring(IDirect3DDevice9* device,float cx,float cy,float rx,float ry,float thickness,float from,float fraction,DWORD color){
+ constexpr int Segments=72;Vertex vertices[2*(Segments+1)]{};
+ int n=std::clamp(static_cast<int>(Segments*fraction+.5f),1,Segments);
+ for(int i=0;i<=n;i++){
+  float a=from+fraction*2*Pi*i/n,c=std::cos(a),s=std::sin(a);
+  vertices[2*i]={cx+c*rx,cy+s*ry,0,1,color,0,0};vertices[2*i+1]={cx+c*(rx+thickness),cy+s*(ry+thickness),0,1,color,0,0};
+ }
+ device->SetTexture(0,nullptr);device->SetFVF(D3DFVF_XYZRHW|D3DFVF_DIFFUSE|D3DFVF_TEX1);device->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP,2*n,vertices,sizeof(Vertex));
+}
 void DrawHostVitals(IDirect3DDevice9* device,float w,float h){
  auto* ped=FindPlayerPed();if(!ped)return;
  float maximum=std::max(1.0f,static_cast<float>(CWorld::Players[0].m_nMaxHealth));
  float health=std::clamp(ped->m_fHealth/maximum,0.0f,1.0f);
- float x=w*.025f,y=h*.83f,width=w*.15f,height=std::max(8.0f,h*.012f);
- Quad(device,x-4,y-4,width+8,height+8,0xd0181818);Quad(device,x,y,width,height,0xff505050);
- if(health>0)Quad(device,x,y,width*health,height,health<.3f?0xffdf4545:0xff7ed091);
+ CVector2D centre,edgeX,edgeY;CRadar::TransformRadarPointToScreenSpace(centre,CVector2D(0,0));
+ CRadar::TransformRadarPointToScreenSpace(edgeX,CVector2D(1,0));CRadar::TransformRadarPointToScreenSpace(edgeY,CVector2D(0,1));
+ float rx=std::abs(edgeX.x-centre.x),ry=std::abs(edgeY.y-centre.y);
+ if(rx>4&&ry>4&&std::isfinite(rx)&&std::isfinite(ry)){
+  float gap=rx*.10f,thick=std::max(4.0f,rx*.11f);
+  Ring(device,centre.x,centre.y,rx+gap,ry+gap,thick,0,1,0xb0101010);
+  if(health>0)Ring(device,centre.x,centre.y,rx+gap,ry+gap,thick,-Pi*.5f,health,health<.3f?0xffdf4545:0xff7ed091);
+  float armour=std::clamp(ped->m_fArmour/std::max(1.0f,static_cast<float>(CWorld::Players[0].m_nMaxArmour)),0.0f,1.0f);
+  if(armour>0){float outer=rx+gap+thick+2;Ring(device,centre.x,centre.y,outer,ry+gap+thick+2,thick*.5f,0,1,0xb0101010);Ring(device,centre.x,centre.y,outer,ry+gap+thick+2,thick*.5f,-Pi*.5f,armour,0xffe0e0e0);}
+ }
  auto* wanted=FindPlayerWanted();unsigned stars=wanted?std::min(wanted->m_nWantedLevel,6u):0;
  float radius=h*.012f;
  for(unsigned s=0;s<6;s++){
@@ -580,8 +621,10 @@ const SettingOption Settings[]={
  {&healthRegen,"MW2 health regeneration",L"HealthRegen"},
  {&peacefulWorld,"Peaceful world (police and NPCs leave you alone)",L"PeacefulWorld"},
  {&invertMouse,"Invert MW2 mouse (up/down)",L"InvertMouse"},
+ {&announcerOn,"MW2 announcer voice",L"AnnouncerOn"},
 };
 constexpr int SettingCount=static_cast<int>(std::size(Settings));
+#include "OptionsMenu.h"
 void Draw(){
  if(!shared)return;
  if(hudFixtureUntil){static char label[]="MW2 HUD TEST";if(GetTickCount()<hudFixtureUntil){CHud::m_pZoneName=label;CHud::m_pLastZoneName=label;CHud::m_ZoneToPrint=label;CHud::m_ZoneState=1;CHud::m_ZoneFadeTimer=1000;CHud::m_ZoneNameTimer=0;}else{CHud::m_pZoneName=hudFixtureOriginalZone;CHud::m_pLastZoneName=nullptr;CHud::m_ZoneState=0;hudFixtureUntil=0;}}
@@ -643,51 +686,24 @@ void Draw(){
  }
  {D3DVIEWPORT9 full{0,0,static_cast<DWORD>(RsGlobal.maximumWidth),static_cast<DWORD>(RsGlobal.maximumHeight),0.0f,1.0f};device->SetViewport(&full);}
  float w=static_cast<float>(RsGlobal.maximumWidth),h=static_cast<float>(RsGlobal.maximumHeight);
- if(texture){device->SetPixelShader(chromaShader);Quad(device,0,0,w,h,0xffffffff,texture);device->SetPixelShader(nullptr);}
+ if(texture&&!predator.active){device->SetPixelShader(chromaShader);Quad(device,0,0,w,h,0xffffffff,texture);device->SetPixelShader(nullptr);}
  device->SetTextureStageState(0,D3DTSS_COLOROP,D3DTOP_SELECTARG2);device->SetTextureStageState(0,D3DTSS_ALPHAOP,D3DTOP_SELECTARG2);
+ // Predator view: dark frame and a targeting box, as MW2's missile camera.
+ if(predator.active){Quad(device,0,0,w,h*.08f,0xc0000000);Quad(device,0,h*.92f,w,h*.08f,0xc0000000);float s=h*.08f,cx=w*.5f,cy=h*.5f;Quad(device,cx-s,cy-s,s*2,2,0xffffffff);Quad(device,cx-s,cy+s,s*2,2,0xffffffff);Quad(device,cx-s,cy-s,2,s*2,0xffffffff);Quad(device,cx+s,cy-s,2,s*2+2,0xffffffff);Quad(device,cx-1,cy-6,2,12,0xffffffff);Quad(device,cx-6,cy-1,12,2,0xffffffff);}
  DrawHostVitals(device,w,h);
  if(weaponMenu)Quad(device,w*.18f,h*.15f,w*.64f,h*.65f,0xf0181818);
- if(settings){
-  float x=w*.25f,y=h*.3f,width=w*.5f;
-  Quad(device,x-20,y-30,width+40,95+SettingCount*40.0f,0xe0202020);Quad(device,x,y,width,10,0xff707070);
-  float position=(fov-50)/60;Quad(device,x+position*width-5,y-6,10,22,0xffffffff);
-  POINT cursor{static_cast<LONG>(uiX),static_cast<LONG>(uiY)};
-  Quad(device,uiX-5,uiY-1,10,2,0xff00ff00);Quad(device,uiX-1,uiY-5,2,10,0xff00ff00);
-  if(Down(VK_LBUTTON)&&cursor.x>=x-10&&cursor.x<=x+width+10&&cursor.y>=y-20&&cursor.y<=y+30){fov=std::clamp(50+(cursor.x-x)/width*60,50.0f,110.0f);SaveFov();}
-  // Checkbox rows: click the box or its label.
-  static bool clickHeld=false;bool click=Down(VK_LBUTTON)&&!clickHeld;clickHeld=Down(VK_LBUTTON);
-  {
-   float rowY=y+45+SettingCount*40.0f;
-   Quad(device,x,rowY,22,22,0xffd0d0d0);Quad(device,x+3,rowY+3,16,16,0xff3070d0);
-   if(click&&cursor.x>=x-5&&cursor.x<=x+width&&cursor.y>=rowY-6&&cursor.y<=rowY+28){
-    resolutionChoice=(resolutionChoice+1)%ResolutionChoices;
-    wchar_t value[8];swprintf_s(value,L"%d",resolutionChoice);WritePrivateProfileStringW(L"Bridge",L"Resolution",value,iniPath.c_str());
-    RequestRuntimeRestart();
-   }
-  }
-  for(int i=0;i<SettingCount;i++){
-   float rowY=y+45+i*40.0f;
-   Quad(device,x,rowY,22,22,0xffd0d0d0);Quad(device,x+3,rowY+3,16,16,*Settings[i].value?0xff30c030:0xff303030);
-   if(click&&cursor.x>=x-5&&cursor.x<=x+width&&cursor.y>=rowY-6&&cursor.y<=rowY+28){*Settings[i].value=!*Settings[i].value;WritePrivateProfileStringW(L"Bridge",Settings[i].key,*Settings[i].value?L"1":L"0",iniPath.c_str());}
-  }
- }
+ if(settings)DrawOptionsShapes(device,w,h);
+ {DWORD now=GetTickCount();if(static_cast<int>(blindUntil-now)>0){float t=(now-blindStart)/static_cast<float>(std::max<DWORD>(1,blindUntil-blindStart));float a=t<.35f?1.0f:1.0f-(t-.35f)/.65f;Quad(device,0,0,w,h,(static_cast<DWORD>(std::clamp(a,0.0f,1.0f)*255)<<24)|0x00ffffff);}}
  if(retarget)device->SetRenderTarget(0,previousTarget);
  if(previousTarget)previousTarget->Release();if(backBuffer)backBuffer->Release();
  saved->Apply();saved->Release();
  // GTA text only after the device state is restored; inside the raw D3D
  // section it renders with the overlay's state and corrupts the frame.
- if(settings){
-  float x=w*.25f,y=h*.3f;
-  CFont::SetScale(.5f,.85f);CFont::SetFontStyle(FONT_SUBTITLES);CFont::SetColor(CRGBA(255,255,255,255));CFont::SetDropColor(CRGBA(0,0,0,255));CFont::SetEdge(1);CFont::SetProportional(true);CFont::SetOrientation(ALIGN_LEFT);CFont::SetBackground(false,false);
-  for(int i=0;i<SettingCount;i++)CFont::PrintString(x+34,y+43+i*40.0f,Settings[i].label);
-  uint32_t rw=0,rh=0;ResolutionFor(resolutionChoice,rw,rh);
-  char resolution[120];sprintf_s(resolution,"MW2 resolution: %s (%ux%u) - click to change, restarts MW2",ResolutionLabels[resolutionChoice],rw,rh);
-  CFont::PrintString(x+34,y+43+SettingCount*40.0f,resolution);
- }
+ if(settings)DrawOptionsText(w,h);
  DrawInventory();
 }
 void Shutdown(){
- Restore();ReleaseTexture();if(chromaShader){chromaShader->Release();chromaShader=nullptr;}
+ RemoveUavPlane();Restore();ReleaseTexture();if(chromaShader){chromaShader->Release();chromaShader=nullptr;}
  if(shared){Lock lock(controlMutex);if(lock.acquired)reinterpret_cast<Control*>(shared)->host.shutdown=1;}
  if(child.hThread)CloseHandle(child.hThread);if(child.hProcess)CloseHandle(child.hProcess);
  if(shared)UnmapViewOfFile(shared);if(mapping)CloseHandle(mapping);if(controlMutex)CloseHandle(controlMutex);if(frameMutex)CloseHandle(frameMutex);if(sceneMutex)CloseHandle(sceneMutex);
@@ -707,6 +723,9 @@ struct Plugin {
   healthRegen=GetPrivateProfileIntW(L"Bridge",L"HealthRegen",1,iniPath.c_str())!=0;
   peacefulWorld=GetPrivateProfileIntW(L"Bridge",L"PeacefulWorld",0,iniPath.c_str())!=0;
   invertMouse=GetPrivateProfileIntW(L"Bridge",L"InvertMouse",0,iniPath.c_str())!=0;
+  announcerOn=GetPrivateProfileIntW(L"Bridge",L"AnnouncerOn",1,iniPath.c_str())!=0;
+  announcerVolume=std::clamp(ReadFloat(L"AnnouncerVolume",2.0f),0.0f,3.0f);
+  hudTextScale=std::clamp(ReadFloat(L"HudTextScale",0.7f),0.4f,1.5f);
   if(!CreateBridge()){Log("Failed to initialize shared memory");return;}
   constexpr uintptr_t call=0x53C104;
   if(*reinterpret_cast<uint8_t*>(call)!=0xe8){Log("Camera call site changed; plugin left inactive");return;}
@@ -728,7 +747,9 @@ struct Plugin {
   beforeScene+=HidePlayerForScene;
   plugin::Events::renderSceneEvent+=RestorePlayerAfterScene;
   plugin::Events::initRwEvent+=InstallCaptureHook;
+  plugin::patch::RedirectCall(0x45902E,UpdatePickup);
   plugin::Events::drawingEvent+=Draw;
+  plugin::Events::drawBlipsEvent+=DrawRadarContacts;
   plugin::Events::d3dLostEvent+=ReleaseTexture;
   plugin::Events::shutdownRwEvent+=Shutdown;
   QueryPerformanceFrequency(&perfFrequency);lastTime=lastFpsTime=GetTickCount();Log("Installed bridge; F6 enables MW2, F7 opens FOV slider");

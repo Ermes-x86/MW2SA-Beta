@@ -197,13 +197,14 @@ fn play_alias_messages(
     local: Res<net::LocalPresentClient>,
 ) {
     for command in events.read() {
-        let (event, pitch_scale) = match command {
+        let (event, pitch_scale, volume_scale) = match command {
             AliasCommand::StopEntity { snd_ent } => {
                 runtime.stop_emitter_cues(*snd_ent, epoch.0);
                 continue;
             }
-            AliasCommand::Play(event) => (event, 1.0),
-            AliasCommand::PlayPitched { sound, pitch } => (sound, *pitch),
+            AliasCommand::Play(event) => (event, 1.0, 1.0),
+            AliasCommand::PlayPitched { sound, pitch } => (sound, *pitch, 1.0),
+            AliasCommand::PlayScaled { sound, volume } => (sound, 1.0, *volume),
             AliasCommand::Stop {
                 namespace,
                 alias,
@@ -234,7 +235,7 @@ fn play_alias_messages(
             SoundClass::World,
             epoch.0,
             pitch_scale,
-            1.0,
+            volume_scale,
             event.fallback.iter().cloned().collect(),
             event.event,
         );

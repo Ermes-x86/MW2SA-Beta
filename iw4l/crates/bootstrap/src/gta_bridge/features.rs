@@ -24,6 +24,7 @@ pub(super) struct State {
     explosions: u32,
     equipment_epoch: u32,
     forced_selection: Option<u32>,
+    loadout: super::loadout::Loadout,
 }
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -112,11 +113,44 @@ pub(super) fn host_actions(
         select.last_primary = 0;
         select.time = clock.time();
     }
+    let Some(ps) = world.0.player(local.0).copied() else {
+        return;
+    };
+    if !bridge.features.catalog.is_empty() {
+        let step = bridge.features.loadout.step(&world.0, &ps);
+        match step {
+            Some(super::loadout::Step::Select(weapon)) => bridge.features.forced_selection = Some(weapon),
+            Some(super::loadout::Step::Give(weapon)) => {
+                let request_id = ids.allocate();
+                let action = sim::ClientAction::GiveWeapon {
+                    request_id,
+                    weapon,
+                    model: 0,
+                };
+                if inbox.push(local.0, action).is_ok() {
+                    bridge.features.loadout.pending = Some((request_id, weapon, std::time::Instant::now()));
+                }
+                return;
+            }
+            None => {}
+        }
+    }
     // Make the grenade control consistently available with the real offhand
     // inventory; giving equipment does not replace the gun currently in hand.
-    if bridge.features.equipment_epoch != bridge.host_movement.epoch {
+    // A lethal the player chose (C4, claymore...) is kept.
+    let has_lethal = ps.weapons.iter().filter(|&&w| w > 0).any(|&w| {
+        world
+            .0
+            .equipment_facts_for(w as u32)
+            .is_some_and(|f| f.is_offhand() && matches!(f.offhand_class, 1 | 4 | 5))
+    });
+    if bridge.features.equipment_epoch != bridge.host_movement.epoch && !bridge.features.loadout.restoring() {
         bridge.features.equipment_epoch = bridge.host_movement.epoch;
-        if let Some(weapon) = world.0.weapon_index_by_script_name("frag_grenade_mp") {
+        if let Some(weapon) = world
+            .0
+            .weapon_index_by_script_name("frag_grenade_mp")
+            .filter(|_| !has_lethal)
+        {
             let request_id = ids.allocate();
             let _ = inbox.push(
                 local.0,
@@ -269,6 +303,27 @@ pub(super) fn export(
                         .map(|ps| (ps.weapon, ps.health, ps.origin))
                 );
             }
+        }
+    }
+    if let Some((request_id, weapon, _)) = bridge.features.loadout.pending {
+        for action in &result.action_results {
+            let sim::ClientAction::GiveWeapon { request_id: id, .. } = action.action else {
+                continue;
+            };
+            if action.client != local || id != request_id {
+                continue;
+            }
+            bridge.features.loadout.pending = None;
+            if action.outcome == sim::ActionOutcome::Applied
+                && world.equipment_facts_for(weapon).is_none_or(|f| !f.is_offhand())
+            {
+                bridge.features.forced_selection = Some(weapon);
+            }
+        }
+    }
+    if host_has_player(bridge) && !bridge.features.catalog.is_empty() {
+        if let Some(ps) = world.player(local) {
+            bridge.features.loadout.save(world, ps);
         }
     }
     let mut projectiles = Vec::with_capacity(32);

@@ -45,6 +45,7 @@ pub use start::{
 mod destructible_loops;
 mod match_set;
 mod match_voices;
+pub use match_voices::voice_prefixes_for_zone;
 
 mod weapon_lock;
 
